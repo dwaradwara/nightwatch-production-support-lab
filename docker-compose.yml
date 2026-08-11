@@ -1,0 +1,118 @@
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: nightwatch-db
+    environment:
+      POSTGRES_USER: nightwatch
+      POSTGRES_PASSWORD: nightwatchpass
+      POSTGRES_DB: nightwatch
+    networks: [nightwatch-net]
+
+  redis:
+    image: redis:7-alpine
+    container_name: nightwatch-redis
+    networks: [nightwatch-net]
+
+  rabbitmq:
+    image: rabbitmq:management-alpine
+    container_name: nightwatch-rabbit
+    environment:
+      RABBITMQ_DEFAULT_USER: nightwatch
+      RABBITMQ_DEFAULT_PASS: nightwatchpass
+    ports:
+      - "15672:15672"
+    networks: [nightwatch-net]
+
+  api:
+    build: ./api
+    container_name: nightwatch-api
+    environment:
+      DB_HOST: nightwatch-db
+      DB_NAME: nightwatch
+      DB_USER: nightwatch
+      DB_PASSWORD: nightwatchpass
+      REDIS_HOST: nightwatch-redis
+      REDIS_PORT: "6379"
+      OTEL_SERVICE_NAME: nightwatch-api
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: none
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://nightwatch-tempo:4318/v1/traces
+    command: ["opentelemetry-instrument", "python", "app.py"]
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+      - redis
+      - tempo
+    networks: [nightwatch-net]
+
+  worker:
+    build: ./worker
+    container_name: nightwatch-worker
+    environment:
+      RABBITMQ_HOST: nightwatch-rabbit
+      RABBITMQ_USER: nightwatch
+      RABBITMQ_PASSWORD: nightwatchpass
+    depends_on:
+      - rabbitmq
+    networks: [nightwatch-net]
+
+  nginx:
+    build: ./nginx
+    container_name: nightwatch-nginx
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+    networks: [nightwatch-net]
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: nightwatch-prometheus
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    networks: [nightwatch-net]
+
+  loki:
+    image: grafana/loki:3.7.0
+    container_name: nightwatch-loki
+    command: ["--config.file=/etc/loki/local-config.yaml"]
+    volumes:
+      - ./loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
+    ports:
+      - "3100:3100"
+    networks: [nightwatch-net]
+
+  alloy:
+    image: grafana/alloy:latest
+    container_name: nightwatch-alloy
+    command: ["run", "/etc/alloy/config.alloy"]
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - loki
+    networks: [nightwatch-net]
+
+  tempo:
+    image: grafana/tempo:3.0.0
+    container_name: nightwatch-tempo
+    command: ["--target=all", "--config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./tempo/tempo.yaml:/etc/tempo.yaml:ro
+      - nightwatch-tempo-data:/var/tempo
+    ports:
+      - "3200:3200"
+      - "4317:4317"
+      - "4318:4318"
+    networks: [nightwatch-net]
+
+networks:
+  nightwatch-net:
+    name: nightwatch-net
+
+volumes:
+  nightwatch-tempo-data:
