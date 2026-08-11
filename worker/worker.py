@@ -1,11 +1,15 @@
 import pika
 import time
+import os
 
-credentials = pika.PlainCredentials("nightwatch", "nightwatchpass")
+credentials = pika.PlainCredentials(
+    os.getenv("RABBITMQ_USER", "nightwatch"),
+    os.getenv("RABBITMQ_PASSWORD", "")
+)
 
 connection = pika.BlockingConnection(
     pika.ConnectionParameters(
-        host="nightwatch-rabbit",
+        host=os.getenv("RABBITMQ_HOST", "nightwatch-rabbit"),
         credentials=credentials
     )
 )

@@ -3,13 +3,15 @@ import psycopg
 from psycopg.rows import dict_row
 import redis
 from prometheus_flask_exporter import PrometheusMetrics
+import os
+
 
 app = Flask(__name__)
 metrics = PrometheusMetrics(app)
 
 cache = redis.Redis(
-    host="nightwatch-redis",
-    port=6379,
+    host=os.getenv("REDIS_HOST", "nightwatch-redis"),
+    port=int(os.getenv("REDIS_PORT", "6379")),
     decode_responses=True
 )
 
@@ -21,14 +23,13 @@ def cache_health():
 
 def get_db():
     return psycopg.connect(
-        host="nightwatch-db",
-        dbname="nightwatch",
-        user="nightwatch",
-        password="nightwatchpass",
-        port=5432,
+        host=os.getenv("DB_HOST", "nightwatch-db"),
+        dbname=os.getenv("DB_NAME", "nightwatch"),
+        user=os.getenv("DB_USER", "nightwatch"),
+        password=os.getenv("DB_PASSWORD", ""),
+        port=int(os.getenv("DB_PORT", "5432")),
         row_factory=dict_row
     )
-
 
 @app.get("/health")
 def health():
