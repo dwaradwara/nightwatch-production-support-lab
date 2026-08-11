@@ -1,0 +1,27 @@
+discovery.docker "nightwatch" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "docker_logs" {
+  targets = []
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "service_name"
+  }
+}
+
+loki.source.docker "nightwatch" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.docker.nightwatch.targets
+  labels        = {"platform" = "docker"}
+  relabel_rules = discovery.relabel.docker_logs.rules
+  forward_to    = [loki.write.nightwatch.receiver]
+}
+
+loki.write "nightwatch" {
+  endpoint {
+    url = "http://nightwatch-loki:3100/loki/api/v1/push"
+  }
+}
