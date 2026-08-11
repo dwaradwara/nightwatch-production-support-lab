@@ -5,6 +5,3 @@ prometheus-flask-exporter
 opentelemetry-distro
 opentelemetry-exporter-otlp
 opentelemetry-instrumentation-flask
-opentelemetry-distro
-opentelemetry-exporter-otlp
-opentelemetry-instrumentation-flask
