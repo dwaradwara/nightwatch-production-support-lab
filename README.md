@@ -1,161 +1,219 @@
-# NIGHTWATCH — Production Support Engineering Lab
+﻿# NIGHTWATCH Production Support Lab
 
-NIGHTWATCH is a hands-on production support lab built around one idea: **start with the customer-facing symptom, isolate the failing layer, collect evidence, make the smallest safe recovery change, and verify restoration through the original path.**
+NIGHTWATCH is a self-built production support environment where I reproduce, investigate, resolve, and document realistic application and infrastructure incidents.
 
-It is designed for practical L2 Technical Support, Application Support, Production Support, Product Support and junior SRE/NOC-adjacent troubleshooting—not as a claim of commercial production ownership.
+The focus is troubleshooting: establish a healthy baseline, isolate the failing layer, use evidence instead of assumptions, apply a controlled fix, and verify recovery.
 
-## Start here
+> All incidents are intentionally reproduced in a training environment. This repository is portfolio evidence, not employer production experience.
 
-- **[Incident Casebook](docs/INCIDENTS.md)** — six strongest investigations with symptom, evidence, root cause, recovery and verification.
-- **[Architecture](docs/ARCHITECTURE.md)** — request path, dependencies and observability design.
-- **[Recruiter Notes](docs/RECRUITER-NOTES.md)** — 30-second summary, strongest examples and interview/resume wording.
-- **[GitHub Actions CI](.github/workflows/ci.yml)** — Python validation plus API and worker image builds.
+---
+
+## What NIGHTWATCH demonstrates
+
+Typical investigation flow:
+
+`Symptom -> Reproduce -> Baseline -> Logs / Metrics / Traces -> Isolate layer -> Root cause -> Fix -> Recovery validation -> RCA`
+
+The environment intentionally contains multiple layers so the visible symptom is not always where the actual fault exists.
+
+---
 
 ## Architecture
 
 ```text
-Client
-  |
-  v
-Nginx :8080
-  |
-  v
-Flask API :8000
-  |---- PostgreSQL
-  |---- Redis
-  |---- RabbitMQ ---> Worker
-  |
-  |---- metrics ---> Prometheus ---> Grafana
-  |---- logs ------> Alloy ---> Loki ---> Grafana
-  |---- traces ----> OpenTelemetry ---> Tempo ---> Grafana
+Browser / API Client
+        |
+        v
+      Nginx
+   HTTP / HTTPS
+        |
+        v
+     Flask API
+        |
+   +----+-----+
+   |          |
+PostgreSQL   Redis
+              |
+           RabbitMQ
+              |
+            Worker
 
-Kubernetes / Kind is used separately for Service-to-Pod routing incidents.
+Observability
+--------------------------------
+Prometheus -> Metrics
+Grafana    -> Dashboards
+Loki       -> Logs
+Tempo      -> Traces
+Alloy      -> Telemetry collection
+OpenTelemetry instrumentation
 ```
 
-## What this project demonstrates
+The stack runs locally with Docker Compose.
 
-- Reverse-proxy and upstream troubleshooting with Nginx
-- Docker lifecycle, networking and service discovery diagnosis
-- Flask health checks and dependency-specific failures
-- PostgreSQL authentication, availability, lock contention and schema mismatch investigation
-- RabbitMQ backlog and consumer-state diagnosis
-- Redis dependency troubleshooting
-- Prometheus metrics, Grafana dashboards and alerting
-- Centralized Docker logging with Grafana Alloy + Loki
-- OpenTelemetry tracing with Tempo
-- Kubernetes Service/Pod/EndpointSlice diagnosis
-- GitHub Actions CI and Docker image validation
+---
 
-## Strong incident set
+## Selected incidents
 
-| Incident | Customer symptom | Root cause / diagnosis |
-|---|---|---|
-| INC-NW-002 | API unavailable / `502` | API container terminated; proxy remained available |
-| INC-NW-003 | `502` while direct API returned `200` | Nginx upstream pointed to the wrong host/port |
-| DB-001 | DB-backed endpoint returned `500` | PostgreSQL authentication mismatch |
-| DB-003 | API request timed out | Query blocked by an `ACCESS EXCLUSIVE` database lock |
-| MQ-001 | Jobs accumulated | Worker absent/stuck; diagnosed using queue and consumer counters |
-| K8S-001 | Pod healthy, Service unreachable | Service selector did not match Pod labels; no usable EndpointSlice |
+### INC-015 - Docker DNS / Service Resolution Failure
 
-Additional exercises covered Docker network disconnection, PostgreSQL availability and schema mismatch, Redis outage recovery, and RabbitMQ ready-vs-unacknowledged message states.
+A healthy API returned HTTP 200 directly while Nginx returned HTTP 502.
 
-See **[docs/INCIDENTS.md](docs/INCIDENTS.md)** for the detailed investigations.
+Nginx logs showed that the configured upstream hostname could not be resolved inside the Docker network.
 
-## Investigation method
+The incident isolated the failure to Docker DNS / service discovery rather than the application process.
+
+**Demonstrated:** HTTP 502 troubleshooting, Nginx logs, Docker networking, service discovery, direct backend health checks, RCA and recovery validation.
+
+[View INC-015](./incidents/INC-015-dns-service-resolution/README.md)
+
+---
+
+### INC-016 - TLS Certificate Hostname Mismatch
+
+HTTPS failed when the client hostname did not match the certificate Subject Alternative Name.
+
+Certificate trust and hostname verification were tested separately so the failure could be identified specifically as an identity mismatch rather than an untrusted certificate.
+
+A corrected certificate containing `nightwatch.local` in the SAN was deployed and HTTPS recovered successfully.
+
+**Demonstrated:** TLS diagnostics, CN/SAN inspection, trust vs hostname validation, curl verbose output, Nginx HTTPS configuration and recovery testing.
+
+[View INC-016](./incidents/INC-016-tls-hostname-mismatch/README.md)
+
+---
+
+### INC-017 - Browser CORS / Preflight Failure
+
+The `/api/tickets` endpoint returned HTTP 200 through curl, while the browser frontend failed with `TypeError: Failed to fetch`.
+
+Chrome DevTools showed that the browser blocked the request because the preflight response did not contain the required CORS headers.
+
+Nginx was updated to explicitly allow the frontend origin, GET/OPTIONS methods, and Authorization/Content-Type headers.
+
+Recovery validation showed:
 
 ```text
-Customer symptom
-    ↓
-Reproduce / verify impact
-    ↓
-Identify the failing layer
-    ↓
-Collect logs, state, metrics or dependency evidence
-    ↓
-Form a root-cause hypothesis
-    ↓
-Apply the smallest safe corrective action
-    ↓
-Verify recovery through the original customer-facing path
+OPTIONS preflight -> HTTP 204
+Access-Control-Allow-Origin -> http://localhost:3001
+Browser fetch -> successful
+Chrome DevTools -> no CORS errors
 ```
 
-A key principle throughout the project is **not to restart a component just because it is involved in the request path**. For example, a database lock incident was recovered by identifying and terminating only the blocking backend session rather than restarting PostgreSQL.
+**Demonstrated:** browser vs API troubleshooting, Chrome DevTools, OPTIONS preflight analysis, HTTP headers, CORS configuration, Nginx and recovery validation.
+
+[View INC-017](./incidents/INC-017-cors-preflight-failure/README.md)
+
+---
+
+## PostgreSQL persistence and schema recovery
+
+During baseline testing for INC-017, `/api/tickets` unexpectedly returned HTTP 500 both through Nginx and directly from the API.
+
+Application logs showed:
+
+```text
+psycopg.errors.UndefinedTable: relation "tickets" does not exist
+```
+
+Database inspection showed zero application tables.
+
+The PostgreSQL container had no persistent data volume, so recreating the container had removed the database state.
+
+The environment was corrected with:
+
+- a persistent PostgreSQL named volume
+- repeatable `db/init.sql` schema initialization
+- seed ticket data
+
+After PostgreSQL was recreated, the expected table and records were present and `/api/tickets` returned HTTP 200.
+
+---
 
 ## Observability
 
-NIGHTWATCH combines all three main observability signals:
+NIGHTWATCH uses multiple telemetry signals during troubleshooting:
 
-- **Metrics:** Prometheus scrapes Flask metrics and Grafana provides service-state visualization and alerting.
-- **Logs:** Alloy discovers Docker containers and forwards centralized logs to Loki for investigation in Grafana Explore.
-- **Traces:** OpenTelemetry instrumentation exports OTLP traces from the Flask API to Tempo, allowing request spans such as `GET /api/tickets` to be inspected.
+- **Prometheus** - metrics
+- **Grafana** - dashboards
+- **Loki** - centralized logs
+- **Tempo** - distributed traces
+- **Grafana Alloy** - telemetry and log collection
+- **OpenTelemetry** - API instrumentation
 
-## Run the stack
-
-A Docker Compose definition is included to make the service layout reproducible:
-
-```bash
-docker compose up -d --build
-```
-
-Primary local endpoints:
+The investigation model is simple:
 
 ```text
-Nginx/API       http://localhost:8080
-Direct API      http://localhost:8000
-Prometheus      http://localhost:9090
-Loki            http://localhost:3100
-Tempo           http://localhost:3200
-RabbitMQ UI     http://localhost:15672
+Metrics -> What changed?
+Logs    -> What failed?
+Traces  -> Where did the request fail?
 ```
 
-The API exposes:
+---
 
-- `/health` — API process health
-- `/db-health` — PostgreSQL connectivity
-- `/cache-health` — Redis connectivity
-- `/api/tickets` — DB-backed application endpoint
-- `/metrics` — Prometheus metrics
+## Core stack
 
-The Docker Compose file uses explicit **lab-only** credentials to make local startup reproducible; application source code itself reads credentials from environment variables rather than hard-coding them.
+Python | Flask | PostgreSQL | Redis | RabbitMQ | Nginx | Docker | Docker Compose | Prometheus | Grafana | Loki | Tempo | Alloy | OpenTelemetry | GitHub Actions | PowerShell | Chrome DevTools
+
+---
 
 ## Repository structure
 
 ```text
-.github/workflows/ci.yml    CI validation and Docker builds
-api/                        Flask API
-worker/                     RabbitMQ consumer
-nginx/                      Reverse-proxy configuration
-prometheus/                 Metrics scrape configuration
-alloy/                      Docker log collection
-loki/                       Centralized log storage configuration
-tempo/                      Trace storage / OTLP receiver configuration
-docs/INCIDENTS.md           Incident casebook
-docs/ARCHITECTURE.md        Architecture notes
-docs/RECRUITER-NOTES.md     Recruiter/interview summary
-docker-compose.yml          Reproducible local stack
-inject-nw001.ps1            Failure injection
-inject-nw002.ps1            Failure injection
-inject-nw003.ps1            Failure injection
-inject-nw004.ps1            Failure injection
+api/          Flask API
+worker/       RabbitMQ consumer
+nginx/        Reverse proxy and HTTPS configuration
+db/           PostgreSQL schema initialization
+frontend/     Browser integration / CORS test client
+prometheus/   Metrics configuration
+loki/         Centralized log configuration
+tempo/        Trace storage configuration
+alloy/        Telemetry collection
+incidents/    Detailed incident investigations
+docs/         Architecture and support documentation
 ```
+
+---
 
 ## CI
 
-GitHub Actions runs for pushes and pull requests to `main` and performs:
+GitHub Actions runs validation on pushes and pull requests to `main`, including:
 
-1. Repository checkout
-2. Python 3.13 setup
-3. API dependency installation
-4. Python syntax validation
-5. NIGHTWATCH API Docker build
-6. NIGHTWATCH worker Docker build
+- Python environment setup
+- API dependency installation
+- Python syntax validation
+- NIGHTWATCH API Docker build
+- NIGHTWATCH worker Docker build
 
-The initial public workflow completed successfully.
+---
 
-## Why this exists
+## Support skills demonstrated
 
-NIGHTWATCH was built to practice support engineering as a diagnostic discipline rather than as a collection of tool tutorials. The project deliberately creates situations where the visible symptom is one layer away from the actual fault—for example a healthy application behind a broken proxy, a healthy Kubernetes Pod behind a Service with no endpoints, or a healthy database process containing a session-level blocker.
+- Incident reproduction and triage
+- REST API troubleshooting
+- HTTP status and header analysis
+- Nginx reverse-proxy diagnostics
+- PostgreSQL troubleshooting
+- Docker networking and service discovery
+- TLS / HTTPS troubleshooting
+- CORS and browser troubleshooting
+- Chrome DevTools investigation
+- Metrics, logs and distributed tracing
+- Root cause analysis
+- Recovery validation
+- Technical documentation
+- Customer-facing incident communication
+- Git-based change management
 
-## Tech stack
+---
 
-`Python` · `Flask` · `Docker` · `Docker Compose` · `Nginx` · `PostgreSQL` · `RabbitMQ` · `Redis` · `Prometheus` · `Grafana` · `Grafana Alloy` · `Loki` · `OpenTelemetry` · `Tempo` · `Kubernetes` · `Kind` · `GitHub Actions` · `PowerShell`
+## Why this project exists
+
+A 502 does not automatically mean the backend is down.
+
+An HTTP 200 OPTIONS response does not automatically mean CORS is valid.
+
+A trusted TLS certificate does not automatically mean its hostname is correct.
+
+A running PostgreSQL container does not automatically mean its expected schema exists.
+
+NIGHTWATCH is built around investigating those distinctions.
