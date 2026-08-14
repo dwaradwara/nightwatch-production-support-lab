@@ -6,6 +6,9 @@ services:
       POSTGRES_USER: nightwatch
       POSTGRES_PASSWORD: nightwatchpass
       POSTGRES_DB: nightwatch
+    volumes:
+      - nightwatch-db-data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     networks: [nightwatch-net]
 
   redis:
@@ -118,5 +121,6 @@ networks:
     name: nightwatch-net
 
 volumes:
+  nightwatch-db-data:
   nightwatch-tempo-data:
 
