@@ -63,6 +63,9 @@ services:
     container_name: nightwatch-nginx
     ports:
       - "8080:80"
+      - "8443:443"
+    volumes:
+      - ./tls:/etc/nginx/tls:ro
     depends_on:
       - api
     networks: [nightwatch-net]
@@ -116,3 +119,4 @@ networks:
 
 volumes:
   nightwatch-tempo-data:
+
