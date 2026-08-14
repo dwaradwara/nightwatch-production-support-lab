@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>NIGHTWATCH CORS Test</title>
+</head>
+<body>
+    <h1>NIGHTWATCH API Test</h1>
+    <button id="load">Load Tickets</button>
+    <pre id="result">Waiting...</pre>
+
+    <script>
+        document.getElementById("load").addEventListener("click", async () => {
+            const result = document.getElementById("result");
+            result.textContent = "Loading...";
+
+            try {
+                const response = await fetch("http://localhost:8080/api/tickets", {
+                    method: "GET",
+                    headers: {
+                        "Authorization": "Bearer demo-token"
+                    }
+                });
+
+                const data = await response.json();
+                result.textContent = JSON.stringify(data, null, 2);
+            } catch (error) {
+                result.textContent = "REQUEST FAILED: " + error;
+                console.error(error);
+            }
+        });
+    </script>
+</body>
+</html>
