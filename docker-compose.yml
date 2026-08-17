@@ -3,37 +3,57 @@ services:
     image: postgres:17-alpine
     container_name: nightwatch-db
     environment:
-      POSTGRES_USER: nightwatch
-      POSTGRES_PASSWORD: nightwatchpass
-      POSTGRES_DB: nightwatch
+      POSTGRES_USER: ${POSTGRES_USER:-nightwatch}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Copy .env.example to .env and set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-nightwatch}
     volumes:
       - nightwatch-db-data:/var/lib/postgresql/data
       - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
     networks: [nightwatch-net]
 
   redis:
     image: redis:7-alpine
     container_name: nightwatch-redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     networks: [nightwatch-net]
 
   rabbitmq:
     image: rabbitmq:management-alpine
     container_name: nightwatch-rabbit
     environment:
-      RABBITMQ_DEFAULT_USER: nightwatch
-      RABBITMQ_DEFAULT_PASS: nightwatchpass
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-nightwatch}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Copy .env.example to .env and set RABBITMQ_PASSWORD}
     ports:
-      - "15672:15672"
+      - "127.0.0.1:15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
     networks: [nightwatch-net]
 
   api:
     build: ./api
     container_name: nightwatch-api
     environment:
+      SERVICE_NAME: nightwatch-api
+      APP_ENV: ${APP_ENV:-dev}
+      APP_VERSION: ${APP_VERSION:-dev}
       DB_HOST: nightwatch-db
-      DB_NAME: nightwatch
-      DB_USER: nightwatch
-      DB_PASSWORD: nightwatchpass
+      DB_NAME: ${POSTGRES_DB:-nightwatch}
+      DB_USER: ${POSTGRES_USER:-nightwatch}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?Copy .env.example to .env and set POSTGRES_PASSWORD}
       REDIS_HOST: nightwatch-redis
       REDIS_PORT: "6379"
       OTEL_SERVICE_NAME: nightwatch-api
@@ -43,11 +63,20 @@ services:
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://nightwatch-tempo:4318/v1/traces
     command: ["opentelemetry-instrument", "python", "app.py"]
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
-      - db
-      - redis
-      - tempo
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      tempo:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3).read()"]
+      interval: 5s
+      timeout: 4s
+      retries: 10
+      start_period: 5s
     networks: [nightwatch-net]
 
   worker:
@@ -55,10 +84,11 @@ services:
     container_name: nightwatch-worker
     environment:
       RABBITMQ_HOST: nightwatch-rabbit
-      RABBITMQ_USER: nightwatch
-      RABBITMQ_PASSWORD: nightwatchpass
+      RABBITMQ_USER: ${RABBITMQ_USER:-nightwatch}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Copy .env.example to .env and set RABBITMQ_PASSWORD}
     depends_on:
-      - rabbitmq
+      rabbitmq:
+        condition: service_healthy
     networks: [nightwatch-net]
 
   nginx:
@@ -70,7 +100,14 @@ services:
     volumes:
       - ./tls:/etc/nginx/tls:ro
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
     networks: [nightwatch-net]
 
   prometheus:
@@ -79,7 +116,10 @@ services:
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      api:
+        condition: service_healthy
     networks: [nightwatch-net]
 
   loki:
@@ -89,7 +129,7 @@ services:
     volumes:
       - ./loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
     ports:
-      - "3100:3100"
+      - "127.0.0.1:3100:3100"
     networks: [nightwatch-net]
 
   alloy:
@@ -111,9 +151,9 @@ services:
       - ./tempo/tempo.yaml:/etc/tempo.yaml:ro
       - nightwatch-tempo-data:/var/tempo
     ports:
-      - "3200:3200"
-      - "4317:4317"
-      - "4318:4318"
+      - "127.0.0.1:3200:3200"
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
     networks: [nightwatch-net]
 
 networks:
@@ -123,4 +163,3 @@ networks:
 volumes:
   nightwatch-db-data:
   nightwatch-tempo-data:
-
