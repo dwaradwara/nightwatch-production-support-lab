@@ -41,19 +41,25 @@ Exit criteria:
 
 ## Phase 2 — Customer Journey and Business Model
 
+Status: implemented and CI-validated on August 17, 2026.
+
 Goal: make failures map to customer/business impact rather than generic endpoints.
 
-Planned capabilities:
-- authenticate or identify simulated customer
-- create ticket
-- read ticket
-- update ticket
-- enqueue background notification/event
-- worker processes job
-- synthetic customer journey
+Delivered capabilities:
+- identify a simulated customer with `X-Customer-ID`
+- create a customer-owned ticket
+- read a customer-owned ticket
+- update ticket support status
+- enqueue a durable background ticket event
+- process the event with the RabbitMQ worker
+- persist worker processing evidence and final ticket state
+- run a continuous synthetic customer journey
+- correlate the create request across Nginx, API, RabbitMQ metadata, worker logs, and Tempo
 
 Exit criteria:
 - a repeatable critical transaction can distinguish "server up" from "service usable"
+
+Evidence and operational semantics are documented in `docs/CUSTOMER-JOURNEY.md`.
 
 ## Phase 3 — Delivery Pipeline
 
