@@ -32,7 +32,12 @@ jobs:
           python -m py_compile worker/worker.py
           python -m py_compile synthetic/synthetic.py
           python -c "import pika, psycopg, redis, prometheus_client; print('runtime imports ok')"
+          python -m json.tool grafana/dashboards/opsforge-l2-operations.json >/dev/null
           bash -n scripts/*.sh
+          docker run --rm --entrypoint promtool \
+            -v "$PWD/prometheus:/etc/prometheus:ro" \
+            prom/prometheus:v3.12.0 \
+            check config /etc/prometheus/prometheus.yml
 
       - name: Prepare CI secrets and TLS
         run: |
