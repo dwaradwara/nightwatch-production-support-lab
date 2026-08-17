@@ -31,8 +31,8 @@ jobs:
           python -m py_compile api/app.py
           python -m py_compile worker/worker.py
 
-      - name: Validate worker runtime dependency
-        run: python -c "import pika; print(pika.__version__)"
+      - name: Validate worker runtime dependencies
+        run: python -c "import pika, prometheus_client; print(pika.__version__)"
 
       - name: Build NIGHTWATCH images
         run: |
@@ -58,12 +58,12 @@ jobs:
 
       - name: Wait for public readiness
         run: |
-          for attempt in $(seq 1 30); do
+          for attempt in $(seq 1 40); do
             if curl -fsS http://127.0.0.1:8080/health/ready > /tmp/readiness.json; then
               cat /tmp/readiness.json
               exit 0
             fi
-            echo "Waiting for readiness: attempt ${attempt}/30"
+            echo "Waiting for readiness: attempt ${attempt}/40"
             docker compose ps
             sleep 2
           done
@@ -76,10 +76,50 @@ jobs:
         run: |
           curl -fsS -D /tmp/headers.txt http://127.0.0.1:8080/api/tickets -o /tmp/tickets.json
           cat /tmp/tickets.json
-          grep -i '^X-Request-ID:' /tmp/headers.txt
 
-      - name: Validate worker remains running
-        run: docker inspect -f '{{.State.Running}}' nightwatch-worker | grep '^true$'
+          REQUEST_ID=$(awk 'BEGIN{IGNORECASE=1} /^X-Request-ID:/ {gsub("\r", "", $2); print $2}' /tmp/headers.txt)
+          test -n "$REQUEST_ID"
+          echo "Correlation ID: $REQUEST_ID"
+
+          for attempt in $(seq 1 10); do
+            if docker logs nightwatch-nginx 2>&1 | grep -F "$REQUEST_ID" >/dev/null && \
+               docker logs nightwatch-api 2>&1 | grep -F "$REQUEST_ID" >/dev/null; then
+              echo "Request ID found in both Nginx and API logs"
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "Correlation ID was not present in both service logs"
+          docker logs nightwatch-nginx 2>&1 | tail -100
+          docker logs nightwatch-api 2>&1 | tail -100
+          exit 1
+
+      - name: Validate worker consumer health
+        run: |
+          test "$(docker inspect -f '{{.State.Health.Status}}' nightwatch-worker)" = "healthy"
+          docker exec nightwatch-rabbit sh -lc 'rabbitmqctl list_queues name consumers | awk '\''$1=="nightwatch-jobs" && $2>=1 {found=1} END {exit !found}'\'''
+
+      - name: Validate baseline telemetry
+        run: |
+          curl -fsS http://127.0.0.1:8000/metrics | grep 'nightwatch_dependency_latency_seconds'
+          curl -fsS http://127.0.0.1:8000/metrics | grep 'nightwatch_db_query_duration_seconds'
+
+          for attempt in $(seq 1 15); do
+            WORKER_QUERY=$(curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=nightwatch_worker_ready' || true)
+            RABBIT_QUERY=$(curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=rabbitmq_identity_info' || true)
+            if echo "$WORKER_QUERY" | grep -q '"value"' && echo "$RABBIT_QUERY" | grep -q '"value"'; then
+              echo "$WORKER_QUERY"
+              echo "$RABBIT_QUERY"
+              exit 0
+            fi
+            echo "Waiting for Prometheus scrapes: attempt ${attempt}/15"
+            sleep 2
+          done
+
+          echo "Expected worker/RabbitMQ telemetry not available in Prometheus"
+          curl -fsS http://127.0.0.1:9090/api/v1/targets || true
+          exit 1
 
       - name: Show service state
         if: always()
