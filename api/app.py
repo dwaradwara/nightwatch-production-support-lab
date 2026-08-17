@@ -20,6 +20,7 @@ APP_ENV = os.getenv("APP_ENV", "dev")
 APP_VERSION = os.getenv("APP_VERSION", "dev")
 QUEUE_NAME = os.getenv("RABBITMQ_QUEUE", "nightwatch-jobs")
 VALID_SEVERITIES = {"SEV1", "SEV2", "SEV3", "SEV4"}
+VALID_STATUSES = {"Open", "Investigating", "Resolved"}
 
 app = Flask(__name__)
 metrics = PrometheusMetrics(app)
@@ -119,6 +120,13 @@ def get_rabbitmq_connection():
             retry_delay=1,
         )
     )
+
+
+def get_customer_id():
+    customer_id = request.headers.get("X-Customer-ID", "").strip()
+    if not customer_id or len(customer_id) > 100:
+        return None
+    return customer_id
 
 
 def check_database():
@@ -329,7 +337,7 @@ def tickets():
                 cur.execute(
                     """
                     SELECT id, title, severity, status, processing_status,
-                           request_id, created_at, processed_at
+                           customer_id, request_id, created_at, processed_at
                     FROM tickets
                     ORDER BY id
                     """
@@ -344,7 +352,10 @@ def create_ticket():
     payload = request.get_json(silent=True) or {}
     title = str(payload.get("title", "")).strip()
     severity = str(payload.get("severity", "")).strip().upper()
+    customer_id = get_customer_id()
 
+    if customer_id is None:
+        return jsonify(error="X-Customer-ID header is required and must be 1-100 characters"), 400
     if not title or len(title) > 200:
         return jsonify(error="title must contain 1-200 characters"), 400
     if severity not in VALID_SEVERITIES:
@@ -357,13 +368,13 @@ def create_ticket():
                 cur.execute(
                     """
                     INSERT INTO tickets (
-                        title, severity, status, processing_status, request_id
+                        title, severity, status, processing_status, customer_id, request_id
                     )
-                    VALUES (%s, %s, 'Open', 'queued', %s)
+                    VALUES (%s, %s, 'Open', 'queued', %s, %s)
                     RETURNING id, title, severity, status, processing_status,
-                              request_id, created_at, processed_at
+                              customer_id, request_id, created_at, processed_at
                     """,
-                    (title, severity, request_id),
+                    (title, severity, customer_id, request_id),
                 )
                 ticket = cur.fetchone()
 
@@ -372,6 +383,7 @@ def create_ticket():
         "event_id": event_id,
         "event_type": "ticket.created",
         "ticket_id": ticket["id"],
+        "customer_id": customer_id,
         "request_id": request_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -389,6 +401,7 @@ def create_ticket():
             "error",
             "ticket_event_publish_failed",
             request_id=request_id,
+            customer_id=customer_id,
             ticket_id=ticket["id"],
             event_id=event_id,
             error_type=type(exc).__name__,
@@ -407,7 +420,7 @@ def create_ticket():
             cur.execute(
                 """
                 SELECT id, title, severity, status, processing_status,
-                       request_id, created_at, processed_at
+                       customer_id, request_id, created_at, processed_at
                 FROM tickets
                 WHERE id = %s
                 """,
@@ -419,6 +432,7 @@ def create_ticket():
         "info",
         "ticket_created",
         request_id=request_id,
+        customer_id=customer_id,
         ticket_id=ticket["id"],
         event_id=event_id,
         severity=severity,
@@ -428,17 +442,21 @@ def create_ticket():
 
 @app.get("/api/tickets/<int:ticket_id>")
 def get_ticket(ticket_id):
+    customer_id = get_customer_id()
+    if customer_id is None:
+        return jsonify(error="X-Customer-ID header is required and must be 1-100 characters"), 400
+
     with db_query_duration.labels(operation="ticket_get").time():
         with get_db() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     SELECT id, title, severity, status, processing_status,
-                           request_id, created_at, processed_at
+                           customer_id, request_id, created_at, processed_at
                     FROM tickets
-                    WHERE id = %s
+                    WHERE id = %s AND customer_id = %s
                     """,
-                    (ticket_id,),
+                    (ticket_id, customer_id),
                 )
                 ticket = cur.fetchone()
                 if ticket is None:
@@ -456,6 +474,64 @@ def get_ticket(ticket_id):
                 events = cur.fetchall()
 
     ticket["events"] = events
+    return jsonify(ticket)
+
+
+@app.patch("/api/tickets/<int:ticket_id>")
+def update_ticket(ticket_id):
+    customer_id = get_customer_id()
+    if customer_id is None:
+        return jsonify(error="X-Customer-ID header is required and must be 1-100 characters"), 400
+
+    payload = request.get_json(silent=True) or {}
+    status = str(payload.get("status", "")).strip()
+    if status not in VALID_STATUSES:
+        return jsonify(error="status must be one of Open, Investigating, Resolved"), 400
+
+    request_id = g.request_id
+    event_id = str(uuid.uuid4())
+
+    with db_query_duration.labels(operation="ticket_update").time():
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE tickets
+                    SET status = %s
+                    WHERE id = %s AND customer_id = %s
+                    RETURNING id, title, severity, status, processing_status,
+                              customer_id, request_id, created_at, processed_at
+                    """,
+                    (status, ticket_id, customer_id),
+                )
+                ticket = cur.fetchone()
+                if ticket is None:
+                    return jsonify(error="ticket not found"), 404
+
+                cur.execute(
+                    """
+                    INSERT INTO ticket_events (
+                        event_id, ticket_id, event_type, request_id, details
+                    )
+                    VALUES (%s, %s, 'ticket.status_updated', %s, %s::jsonb)
+                    """,
+                    (
+                        event_id,
+                        ticket_id,
+                        request_id,
+                        json.dumps({"status": status}),
+                    ),
+                )
+
+    log_event(
+        "info",
+        "ticket_updated",
+        request_id=request_id,
+        customer_id=customer_id,
+        ticket_id=ticket_id,
+        event_id=event_id,
+        status=status,
+    )
     return jsonify(ticket)
 
 
