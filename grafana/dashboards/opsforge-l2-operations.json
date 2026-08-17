@@ -1,0 +1,231 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Customer Path",
+      "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "nightwatch_synthetic_customer_path_up", "legendFormat": "", "range": true, "refId": "A"}],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "orientation": "auto", "textMode": "auto", "colorMode": "value", "graphMode": "area", "justifyMode": "auto"},
+      "fieldConfig": {"defaults": {"unit": "bool", "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}}, "overrides": []},
+      "description": "Latest full synthetic create → process → update customer journey. 1 means usable, 0 means customer impact."
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "API 5xx Ratio (5m)",
+      "gridPos": {"x": 6, "y": 0, "w": 6, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "opsforge:http_5xx:ratio5m", "legendFormat": "", "range": true, "refId": "A"}],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "orientation": "auto", "textMode": "auto", "colorMode": "value", "graphMode": "area", "justifyMode": "auto"},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 0.01}, {"color": "red", "value": 0.05}]}}, "overrides": []},
+      "description": "Server-error ratio over the last five minutes."
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "API p95 Latency (5m)",
+      "gridPos": {"x": 12, "y": 0, "w": 6, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "opsforge:http_request_duration_seconds:p95_5m", "legendFormat": "", "range": true, "refId": "A"}],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "orientation": "auto", "textMode": "auto", "colorMode": "value", "graphMode": "area", "justifyMode": "auto"},
+      "fieldConfig": {"defaults": {"unit": "s", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 0.3}, {"color": "red", "value": 0.5}]}}, "overrides": []},
+      "description": "Five-minute p95 request latency. Simulated objective: below 500 ms."
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Queue Ready",
+      "gridPos": {"x": 18, "y": 0, "w": 6, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "opsforge:rabbitmq_ready_messages", "legendFormat": "", "range": true, "refId": "A"}],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "orientation": "auto", "textMode": "auto", "colorMode": "value", "graphMode": "area", "justifyMode": "auto"},
+      "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 5}, {"color": "red", "value": 10}]}}, "overrides": []},
+      "description": "Ticket events waiting in RabbitMQ. Persistent growth with healthy API usually points to async processing pressure."
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "API Traffic and 5xx Rate",
+      "gridPos": {"x": 0, "y": 4, "w": 12, "h": 7},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "opsforge:http_requests:rate5m", "legendFormat": "requests/s", "range": true, "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "opsforge:http_5xx:rate5m", "legendFormat": "5xx/s", "range": true, "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 1, "fillOpacity": 10, "gradientMode": "none", "spanNulls": false, "showPoints": "auto", "pointSize": 5, "stacking": {"mode": "none", "group": "A"}, "axisPlacement": "auto", "axisLabel": "", "scaleDistribution": {"type": "linear"}, "hideFrom": {"tooltip": false, "viz": false, "legend": false}}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "calcs": []}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "description": "Rate first: determine whether errors reflect real customer traffic or a tiny sample."
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "API Latency Percentiles",
+      "gridPos": {"x": 12, "y": 4, "w": 12, "h": 7},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "opsforge:http_request_duration_seconds:p95_5m", "legendFormat": "p95", "range": true, "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "opsforge:http_request_duration_seconds:p99_5m", "legendFormat": "p99", "range": true, "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 1, "fillOpacity": 10, "gradientMode": "none", "spanNulls": false, "showPoints": "auto", "pointSize": 5, "stacking": {"mode": "none", "group": "A"}, "axisPlacement": "auto", "axisLabel": "", "scaleDistribution": {"type": "linear"}, "hideFrom": {"tooltip": false, "viz": false, "legend": false}}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "calcs": []}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "description": "Use alongside DB/query and queue panels to locate latency origin."
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "API Dependency Reachability",
+      "gridPos": {"x": 0, "y": 11, "w": 8, "h": 7},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "nightwatch_dependency_up", "legendFormat": "{{dependency}}", "range": true, "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "bool", "custom": {"drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 1, "fillOpacity": 10, "gradientMode": "none", "spanNulls": false, "showPoints": "auto", "pointSize": 5, "stacking": {"mode": "none", "group": "A"}, "axisPlacement": "auto", "axisLabel": "", "scaleDistribution": {"type": "linear"}, "hideFrom": {"tooltip": false, "viz": false, "legend": false}}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "calcs": []}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "description": "Point-in-time application dependency checks for PostgreSQL, Redis and RabbitMQ."
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "PostgreSQL Connections",
+      "gridPos": {"x": 8, "y": 11, "w": 8, "h": 7},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "opsforge:postgres_connections", "legendFormat": "all connections", "range": true, "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "opsforge:postgres_active_connections", "legendFormat": "active", "range": true, "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 1, "fillOpacity": 10, "gradientMode": "none", "spanNulls": false, "showPoints": "auto", "pointSize": 5, "stacking": {"mode": "none", "group": "A"}, "axisPlacement": "auto", "axisLabel": "", "scaleDistribution": {"type": "linear"}, "hideFrom": {"tooltip": false, "viz": false, "legend": false}}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "calcs": []}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "description": "Connection count and active sessions from postgres_exporter."
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "PostgreSQL Transaction / Lock Risk",
+      "gridPos": {"x": 16, "y": 11, "w": 8, "h": 7},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "opsforge:postgres_max_transaction_seconds", "legendFormat": "max transaction seconds", "range": true, "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "opsforge:postgres_locks", "legendFormat": "locks", "range": true, "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 1, "fillOpacity": 10, "gradientMode": "none", "spanNulls": false, "showPoints": "auto", "pointSize": 5, "stacking": {"mode": "none", "group": "A"}, "axisPlacement": "auto", "axisLabel": "", "scaleDistribution": {"type": "linear"}, "hideFrom": {"tooltip": false, "viz": false, "legend": false}}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "calcs": []}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "description": "Long transactions and lock growth are investigation signals, not root-cause proof."
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "RabbitMQ Ticket Queue",
+      "gridPos": {"x": 0, "y": 18, "w": 12, "h": 7},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "opsforge:rabbitmq_ready_messages", "legendFormat": "ready", "range": true, "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "opsforge:rabbitmq_unacked_messages", "legendFormat": "unacked", "range": true, "refId": "B"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "opsforge:rabbitmq_consumers", "legendFormat": "consumers", "range": true, "refId": "C"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 1, "fillOpacity": 10, "gradientMode": "none", "spanNulls": false, "showPoints": "auto", "pointSize": 5, "stacking": {"mode": "none", "group": "A"}, "axisPlacement": "auto", "axisLabel": "", "scaleDistribution": {"type": "linear"}, "hideFrom": {"tooltip": false, "viz": false, "legend": false}}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "calcs": []}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "description": "Ready growth + zero consumers points to worker availability; unacked growth points to slow/stuck processing."
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Worker Processing",
+      "gridPos": {"x": 12, "y": 18, "w": 6, "h": 7},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "opsforge:worker_success:rate5m", "legendFormat": "success/s", "range": true, "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "opsforge:worker_failure:rate5m", "legendFormat": "failure/s", "range": true, "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops", "custom": {"drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 1, "fillOpacity": 10, "gradientMode": "none", "spanNulls": false, "showPoints": "auto", "pointSize": 5, "stacking": {"mode": "none", "group": "A"}, "axisPlacement": "auto", "axisLabel": "", "scaleDistribution": {"type": "linear"}, "hideFrom": {"tooltip": false, "viz": false, "legend": false}}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "calcs": []}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "description": "Background processing throughput by outcome."
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Worker p95 Job Duration",
+      "gridPos": {"x": 18, "y": 18, "w": 6, "h": 7},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "opsforge:worker_job_duration_seconds:p95_5m", "legendFormat": "p95", "range": true, "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 1, "fillOpacity": 10, "gradientMode": "none", "spanNulls": false, "showPoints": "auto", "pointSize": 5, "stacking": {"mode": "none", "group": "A"}, "axisPlacement": "auto", "axisLabel": "", "scaleDistribution": {"type": "linear"}, "hideFrom": {"tooltip": false, "viz": false, "legend": false}}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "calcs": []}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "description": "High job duration with queue growth indicates async capacity or dependency latency pressure."
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Redis Availability",
+      "gridPos": {"x": 0, "y": 25, "w": 6, "h": 7},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "redis_up", "legendFormat": "redis_up", "range": true, "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "bool", "custom": {"drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 1, "fillOpacity": 10, "gradientMode": "none", "spanNulls": false, "showPoints": "auto", "pointSize": 5, "stacking": {"mode": "none", "group": "A"}, "axisPlacement": "auto", "axisLabel": "", "scaleDistribution": {"type": "linear"}, "hideFrom": {"tooltip": false, "viz": false, "legend": false}}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "calcs": []}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "description": "Exporter-level reachability for the Redis cache."
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Database Query Duration",
+      "gridPos": {"x": 6, "y": 25, "w": 9, "h": 7},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "histogram_quantile(0.95, sum by (le, operation) (rate(nightwatch_db_query_duration_seconds_bucket[5m])))", "legendFormat": "{{operation}} p95", "range": true, "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 1, "fillOpacity": 10, "gradientMode": "none", "spanNulls": false, "showPoints": "auto", "pointSize": 5, "stacking": {"mode": "none", "group": "A"}, "axisPlacement": "auto", "axisLabel": "", "scaleDistribution": {"type": "linear"}, "hideFrom": {"tooltip": false, "viz": false, "legend": false}}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "calcs": []}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "description": "Application-observed PostgreSQL query latency by operation."
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Dependency Check Latency",
+      "gridPos": {"x": 15, "y": 25, "w": 9, "h": 7},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "histogram_quantile(0.95, sum by (le, dependency, operation) (rate(nightwatch_dependency_latency_seconds_bucket[5m])))", "legendFormat": "{{dependency}} / {{operation}}", "range": true, "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 1, "fillOpacity": 10, "gradientMode": "none", "spanNulls": false, "showPoints": "auto", "pointSize": 5, "stacking": {"mode": "none", "group": "A"}, "axisPlacement": "auto", "axisLabel": "", "scaleDistribution": {"type": "linear"}, "hideFrom": {"tooltip": false, "viz": false, "legend": false}}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "calcs": []}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "description": "Application-observed dependency probe latency. Compare against exporter and customer symptoms."
+    },
+    {
+      "id": 16,
+      "type": "logs",
+      "title": "Live Application / Worker / Nginx Logs",
+      "gridPos": {"x": 0, "y": 32, "w": 24, "h": 10},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "{service_name=~\".*(api|worker|nginx).*\"}", "queryType": "range", "refId": "A"}],
+      "options": {"showTime": true, "showLabels": false, "showCommonLabels": false, "wrapLogMessage": true, "prettifyLogMessage": false, "enableLogDetails": true, "dedupStrategy": "none", "sortOrder": "Descending"},
+      "description": "Start with the customer/request symptom, copy X-Request-ID from logs, then search Tempo for the same request correlation attribute."
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 41,
+  "tags": ["opsforge", "l2", "production-support"],
+  "templating": {"list": []},
+  "time": {"from": "now-30m", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "OPSFORGE L2 Operations",
+  "uid": "opsforge-l2-operations",
+  "version": 1,
+  "weekStart": ""
+}
