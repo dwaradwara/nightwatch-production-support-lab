@@ -15,6 +15,7 @@ scrape_configs:
       - targets: ["nightwatch-worker:9100"]
 
   - job_name: "nightwatch-rabbitmq"
+    metrics_path: /metrics/per-object
     static_configs:
       - targets: ["nightwatch-rabbit:15692"]
 
