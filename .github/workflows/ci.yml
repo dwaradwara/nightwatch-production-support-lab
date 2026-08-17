@@ -1,4 +1,4 @@
-name: NIGHTWATCH CI
+name: NIGHTWATCH OPSFORGE CI
 
 on:
   push:
@@ -23,11 +23,68 @@ jobs:
       - name: Install API dependencies
         run: pip install -r api/requirements.txt
 
-      - name: Python syntax check
-        run: python -m py_compile api/app.py
+      - name: Install worker dependencies
+        run: pip install -r worker/requirements.txt
 
-      - name: Build NIGHTWATCH API image
-        run: docker build -t nightwatch-api:ci ./api
+      - name: Python syntax checks
+        run: |
+          python -m py_compile api/app.py
+          python -m py_compile worker/worker.py
 
-      - name: Build NIGHTWATCH Worker image
-        run: docker build -t nightwatch-worker:ci ./worker
+      - name: Validate worker runtime dependency
+        run: python -c "import pika; print(pika.__version__)"
+
+      - name: Build NIGHTWATCH images
+        run: |
+          docker build -t nightwatch-api:ci ./api
+          docker build -t nightwatch-worker:ci ./worker
+          docker build -t nightwatch-nginx:ci ./nginx
+
+      - name: Prepare CI runtime configuration
+        run: |
+          cp .env.example .env
+          openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout tls/nightwatch-fixed.key \
+            -out tls/nightwatch-fixed.crt \
+            -days 1 \
+            -subj "/CN=nightwatch.local" \
+            -addext "subjectAltName=DNS:nightwatch.local"
+
+      - name: Validate Docker Compose configuration
+        run: docker compose config --quiet
+
+      - name: Start OPSFORGE stack
+        run: docker compose up -d --build
+
+      - name: Wait for public readiness
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/health/ready > /tmp/readiness.json; then
+              cat /tmp/readiness.json
+              exit 0
+            fi
+            echo "Waiting for readiness: attempt ${attempt}/30"
+            docker compose ps
+            sleep 2
+          done
+          echo "OPSFORGE stack did not become ready"
+          docker compose ps
+          docker compose logs --tail=200
+          exit 1
+
+      - name: Validate customer path and request correlation
+        run: |
+          curl -fsS -D /tmp/headers.txt http://127.0.0.1:8080/api/tickets -o /tmp/tickets.json
+          cat /tmp/tickets.json
+          grep -i '^X-Request-ID:' /tmp/headers.txt
+
+      - name: Validate worker remains running
+        run: docker inspect -f '{{.State.Running}}' nightwatch-worker | grep '^true$'
+
+      - name: Show service state
+        if: always()
+        run: docker compose ps
+
+      - name: Stop OPSFORGE stack
+        if: always()
+        run: docker compose down -v
