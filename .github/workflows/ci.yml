@@ -72,14 +72,19 @@ jobs:
           docker compose logs --tail=200
           exit 1
 
-      - name: Validate customer path and request correlation
+      - name: Validate customer path and log correlation
         run: |
-          curl -fsS -D /tmp/headers.txt http://127.0.0.1:8080/api/tickets -o /tmp/tickets.json
+          REQUEST_ID="opsforge-ci-correlation"
+          curl -fsS \
+            -H "X-Request-ID: $REQUEST_ID" \
+            -D /tmp/headers.txt \
+            http://127.0.0.1:8080/api/tickets \
+            -o /tmp/tickets.json
           cat /tmp/tickets.json
 
-          REQUEST_ID=$(awk 'BEGIN{IGNORECASE=1} /^X-Request-ID:/ {gsub("\r", "", $2); print $2}' /tmp/headers.txt)
-          test -n "$REQUEST_ID"
-          echo "Correlation ID: $REQUEST_ID"
+          RESPONSE_ID=$(awk 'BEGIN{IGNORECASE=1} /^X-Request-ID:/ {gsub("\r", "", $2); print $2}' /tmp/headers.txt)
+          test "$RESPONSE_ID" = "$REQUEST_ID"
+          echo "Correlation ID preserved: $REQUEST_ID"
 
           for attempt in $(seq 1 10); do
             if docker logs nightwatch-nginx 2>&1 | grep -F "$REQUEST_ID" >/dev/null && \
@@ -93,6 +98,30 @@ jobs:
           echo "Correlation ID was not present in both service logs"
           docker logs nightwatch-nginx 2>&1 | tail -100
           docker logs nightwatch-api 2>&1 | tail -100
+          exit 1
+
+      - name: Validate request correlation in Tempo
+        run: |
+          REQUEST_ID="opsforge-ci-correlation"
+          QUERY='{ span."nightwatch.request_id" = "opsforge-ci-correlation" }'
+
+          for attempt in $(seq 1 20); do
+            TRACE_RESULT=$(curl -fsS -G http://127.0.0.1:3200/api/search \
+              --data-urlencode "q=$QUERY" || true)
+
+            if echo "$TRACE_RESULT" | grep -q '"traceID"'; then
+              echo "$TRACE_RESULT"
+              echo "Request ID found in Tempo trace attributes: $REQUEST_ID"
+              exit 0
+            fi
+
+            echo "Waiting for correlated trace: attempt ${attempt}/20"
+            sleep 2
+          done
+
+          echo "Tempo did not return a trace for request ID: $REQUEST_ID"
+          docker logs nightwatch-api 2>&1 | tail -100
+          docker logs nightwatch-tempo 2>&1 | tail -100
           exit 1
 
       - name: Validate worker consumer health
