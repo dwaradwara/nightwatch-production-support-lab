@@ -121,6 +121,34 @@ jobs:
           curl -fsS http://127.0.0.1:9090/api/v1/targets || true
           exit 1
 
+      - name: Validate Grafana provisioning
+        run: |
+          set -a
+          source .env
+          set +a
+
+          for attempt in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:3000/api/health > /tmp/grafana-health.json; then
+              cat /tmp/grafana-health.json
+
+              curl -fsS -u "$GRAFANA_ADMIN_USER:$GRAFANA_ADMIN_PASSWORD" \
+                http://127.0.0.1:3000/api/datasources/uid/prometheus | grep '"uid":"prometheus"'
+              curl -fsS -u "$GRAFANA_ADMIN_USER:$GRAFANA_ADMIN_PASSWORD" \
+                http://127.0.0.1:3000/api/datasources/uid/loki | grep '"uid":"loki"'
+              curl -fsS -u "$GRAFANA_ADMIN_USER:$GRAFANA_ADMIN_PASSWORD" \
+                http://127.0.0.1:3000/api/datasources/uid/tempo | grep '"uid":"tempo"'
+
+              echo "Grafana health and datasource provisioning validated"
+              exit 0
+            fi
+            echo "Waiting for Grafana: attempt ${attempt}/20"
+            sleep 2
+          done
+
+          echo "Grafana did not become healthy"
+          docker logs nightwatch-grafana 2>&1 | tail -100
+          exit 1
+
       - name: Show service state
         if: always()
         run: docker compose ps
