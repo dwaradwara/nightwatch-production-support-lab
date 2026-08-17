@@ -6,6 +6,7 @@ import time
 import uuid
 
 from flask import Flask, g, jsonify, request
+from opentelemetry import trace
 import psycopg
 from psycopg.rows import dict_row
 from prometheus_client import Counter, Gauge, Histogram
@@ -131,6 +132,12 @@ def start_request_context():
     incoming_request_id = request.headers.get("X-Request-ID", "").strip()
     g.request_id = incoming_request_id or str(uuid.uuid4())
     g.request_started = time.perf_counter()
+
+    current_span = trace.get_current_span()
+    if current_span.is_recording():
+        current_span.set_attribute("nightwatch.request_id", g.request_id)
+        current_span.set_attribute("nightwatch.environment", APP_ENV)
+        current_span.set_attribute("nightwatch.version", APP_VERSION)
 
 
 @app.after_request
