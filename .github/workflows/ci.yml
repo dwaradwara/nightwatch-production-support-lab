@@ -98,7 +98,7 @@ jobs:
       - name: Validate worker consumer health
         run: |
           test "$(docker inspect -f '{{.State.Health.Status}}' nightwatch-worker)" = "healthy"
-          docker exec nightwatch-rabbit sh -lc 'rabbitmqctl list_queues name consumers | awk '\''$1=="nightwatch-jobs" && $2>=1 {found=1} END {exit !found}'\'''
+          docker exec nightwatch-rabbit rabbitmqctl list_queues name consumers | awk '$1=="nightwatch-jobs" && $2>=1 {found=1} END {exit !found}'
 
       - name: Validate baseline telemetry
         run: |
