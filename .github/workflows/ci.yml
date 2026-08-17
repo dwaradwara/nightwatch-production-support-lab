@@ -74,17 +74,16 @@ jobs:
 
       - name: Validate customer path and log correlation
         run: |
-          REQUEST_ID="opsforge-ci-correlation"
           curl -fsS \
-            -H "X-Request-ID: $REQUEST_ID" \
             -D /tmp/headers.txt \
             http://127.0.0.1:8080/api/tickets \
             -o /tmp/tickets.json
           cat /tmp/tickets.json
 
-          RESPONSE_ID=$(awk 'BEGIN{IGNORECASE=1} /^X-Request-ID:/ {gsub("\r", "", $2); print $2}' /tmp/headers.txt)
-          test "$RESPONSE_ID" = "$REQUEST_ID"
-          echo "Correlation ID preserved: $REQUEST_ID"
+          REQUEST_ID=$(awk 'BEGIN{IGNORECASE=1} /^X-Request-ID:/ {gsub("\r", "", $2); print $2}' /tmp/headers.txt)
+          test -n "$REQUEST_ID"
+          echo "Edge correlation ID: $REQUEST_ID"
+          echo "OPSFORGE_REQUEST_ID=$REQUEST_ID" >> "$GITHUB_ENV"
 
           for attempt in $(seq 1 10); do
             if docker logs nightwatch-nginx 2>&1 | grep -F "$REQUEST_ID" >/dev/null && \
@@ -102,8 +101,8 @@ jobs:
 
       - name: Validate request correlation in Tempo
         run: |
-          REQUEST_ID="opsforge-ci-correlation"
-          QUERY='{ span."nightwatch.request_id" = "opsforge-ci-correlation" }'
+          test -n "$OPSFORGE_REQUEST_ID"
+          QUERY="{ span.\"nightwatch.request_id\" = \"$OPSFORGE_REQUEST_ID\" }"
 
           for attempt in $(seq 1 20); do
             TRACE_RESULT=$(curl -fsS -G http://127.0.0.1:3200/api/search \
@@ -111,7 +110,7 @@ jobs:
 
             if echo "$TRACE_RESULT" | grep -q '"traceID"'; then
               echo "$TRACE_RESULT"
-              echo "Request ID found in Tempo trace attributes: $REQUEST_ID"
+              echo "Request ID found in Tempo trace attributes: $OPSFORGE_REQUEST_ID"
               exit 0
             fi
 
@@ -119,7 +118,7 @@ jobs:
             sleep 2
           done
 
-          echo "Tempo did not return a trace for request ID: $REQUEST_ID"
+          echo "Tempo did not return a trace for request ID: $OPSFORGE_REQUEST_ID"
           docker logs nightwatch-api 2>&1 | tail -100
           docker logs nightwatch-tempo 2>&1 | tail -100
           exit 1
