@@ -5,6 +5,7 @@ import os
 import time
 
 import pika
+import psycopg
 from prometheus_client import Counter, Gauge, Histogram, start_http_server
 
 
@@ -39,6 +40,11 @@ job_duration = Histogram(
     "nightwatch_worker_job_duration_seconds",
     "Background job processing duration",
 )
+worker_db_duration = Histogram(
+    "nightwatch_worker_db_operation_duration_seconds",
+    "Worker database operation duration",
+    ["operation"],
+)
 
 
 def log_event(level, event, **fields):
@@ -54,6 +60,17 @@ def log_event(level, event, **fields):
     getattr(logger, level)(json.dumps(payload, separators=(",", ":"), default=str))
 
 
+def get_db():
+    return psycopg.connect(
+        host=os.getenv("DB_HOST", "nightwatch-db"),
+        dbname=os.getenv("DB_NAME", "nightwatch"),
+        user=os.getenv("DB_USER", "nightwatch"),
+        password=os.getenv("DB_PASSWORD", ""),
+        port=int(os.getenv("DB_PORT", "5432")),
+        connect_timeout=3,
+    )
+
+
 def process(ch, method, properties, body):
     started = time.perf_counter()
     request_id = None
@@ -61,16 +78,55 @@ def process(ch, method, properties, body):
         request_id = properties.headers.get("x-request-id") or properties.headers.get("X-Request-ID")
 
     try:
+        event = json.loads(body)
+        event_id = str(event["event_id"])
+        event_type = str(event["event_type"])
+        ticket_id = int(event["ticket_id"])
+        request_id = request_id or event.get("request_id")
+
+        if event_type != "ticket.created":
+            raise ValueError(f"unsupported event type: {event_type}")
+
         log_event(
             "info",
             "job_started",
             queue=QUEUE_NAME,
             request_id=request_id,
+            event_id=event_id,
+            ticket_id=ticket_id,
+            event_type=event_type,
             delivery_tag=method.delivery_tag,
         )
 
-        # Simulated background work. Phase 2 will replace this with a real customer workflow.
-        time.sleep(1)
+        with worker_db_duration.labels(operation="ticket_process").time():
+            with get_db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO ticket_events (
+                            event_id, ticket_id, event_type, request_id, details
+                        )
+                        VALUES (%s, %s, %s, %s, %s::jsonb)
+                        ON CONFLICT (event_id) DO NOTHING
+                        """,
+                        (
+                            event_id,
+                            ticket_id,
+                            "ticket.processed",
+                            request_id,
+                            json.dumps({"source_event": event_type}),
+                        ),
+                    )
+                    cur.execute(
+                        """
+                        UPDATE tickets
+                        SET processing_status = 'processed', processed_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (ticket_id,),
+                    )
+                    if cur.rowcount != 1:
+                        raise RuntimeError(f"ticket {ticket_id} does not exist")
 
         ch.basic_ack(delivery_tag=method.delivery_tag)
         jobs_processed.labels(result="success").inc()
@@ -79,6 +135,8 @@ def process(ch, method, properties, body):
             "job_completed",
             queue=QUEUE_NAME,
             request_id=request_id,
+            event_id=event_id,
+            ticket_id=ticket_id,
             delivery_tag=method.delivery_tag,
         )
     except Exception as exc:
@@ -89,9 +147,9 @@ def process(ch, method, properties, body):
             queue=QUEUE_NAME,
             request_id=request_id,
             error_type=type(exc).__name__,
+            error=str(exc),
         )
         ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
-        raise
     finally:
         job_duration.observe(time.perf_counter() - started)
 
