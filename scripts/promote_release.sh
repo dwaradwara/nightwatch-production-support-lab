@@ -62,11 +62,15 @@ printf 'environment=%s\nversion=%s\nstage=verification\nstatus=failed\nexit_code
   "$ENVIRONMENT" "$VERSION" "$VERIFY_STATUS" \
   > "$DIAGNOSTIC_DIR/promotion-state.txt"
 
-FAILED_CHECK="unknown verification check"
+FAILED_CHECK=""
 if [[ -f "$DIAGNOSTIC_DIR/failure.txt" ]]; then
   FAILED_CHECK=$(awk -F= '$1=="check" {print substr($0, index($0, "=") + 1)}' "$DIAGNOSTIC_DIR/failure.txt")
-  [[ -n "$FAILED_CHECK" ]] || FAILED_CHECK="unknown verification check"
 fi
+if [[ -z "$FAILED_CHECK" && -f "$PROMOTION_LOG" ]]; then
+  FAILED_CHECK=$(grep -F 'OPSFORGE verification check:' "$PROMOTION_LOG" | tail -n 1 | sed 's/^.*OPSFORGE verification check: //' || true)
+fi
+[[ -n "$FAILED_CHECK" ]] || FAILED_CHECK="unknown verification check"
+
 echo "::error title=OPSFORGE release verification failed::environment=$ENVIRONMENT version=$VERSION check=$FAILED_CHECK"
 echo "Promotion rejected: environment=$ENVIRONMENT version=$VERSION" >&2
 
