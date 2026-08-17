@@ -26,19 +26,26 @@ jobs:
       - name: Install worker dependencies
         run: pip install -r worker/requirements.txt
 
+      - name: Install synthetic dependencies
+        run: pip install -r synthetic/requirements.txt
+
       - name: Python syntax checks
         run: |
           python -m py_compile api/app.py
           python -m py_compile worker/worker.py
+          python -m py_compile synthetic/synthetic.py
 
-      - name: Validate worker runtime dependencies
-        run: python -c "import pika, prometheus_client; print(pika.__version__)"
+      - name: Validate runtime dependencies
+        run: |
+          python -c "import pika, psycopg, redis, prometheus_client; print(pika.__version__)"
+          python -c "import synthetic.synthetic; print('synthetic imports ok')"
 
       - name: Build NIGHTWATCH images
         run: |
           docker build -t nightwatch-api:ci ./api
           docker build -t nightwatch-worker:ci ./worker
           docker build -t nightwatch-nginx:ci ./nginx
+          docker build -t nightwatch-synthetic:ci ./synthetic
 
       - name: Prepare CI runtime configuration
         run: |
@@ -61,6 +68,7 @@ jobs:
           for attempt in $(seq 1 40); do
             if curl -fsS http://127.0.0.1:8080/health/ready > /tmp/readiness.json; then
               cat /tmp/readiness.json
+              grep -q '"rabbitmq":"healthy"' /tmp/readiness.json
               exit 0
             fi
             echo "Waiting for readiness: attempt ${attempt}/40"
@@ -72,31 +80,75 @@ jobs:
           docker compose logs --tail=200
           exit 1
 
-      - name: Validate customer path and log correlation
+      - name: Validate browser preflight for ticket creation
+        run: |
+          curl -fsS -i -X OPTIONS \
+            -H 'Origin: http://localhost:3001' \
+            -H 'Access-Control-Request-Method: POST' \
+            -H 'Access-Control-Request-Headers: Content-Type' \
+            http://127.0.0.1:8080/api/tickets > /tmp/preflight.txt
+          cat /tmp/preflight.txt
+          grep -qi '^Access-Control-Allow-Origin: http://localhost:3001' /tmp/preflight.txt
+          grep -qi '^Access-Control-Allow-Methods: GET, POST, OPTIONS' /tmp/preflight.txt
+
+      - name: Validate end-to-end ticket journey
         run: |
           curl -fsS \
-            -D /tmp/headers.txt \
+            -X POST \
+            -H 'Content-Type: application/json' \
+            -D /tmp/journey-headers.txt \
+            -d '{"title":"CI end-to-end customer journey","severity":"SEV3"}' \
             http://127.0.0.1:8080/api/tickets \
-            -o /tmp/tickets.json
-          cat /tmp/tickets.json
+            -o /tmp/journey-create.json
 
-          REQUEST_ID=$(awk 'BEGIN{IGNORECASE=1} /^X-Request-ID:/ {gsub("\r", "", $2); print $2}' /tmp/headers.txt)
+          cat /tmp/journey-create.json
+
+          REQUEST_ID=$(awk 'BEGIN{IGNORECASE=1} /^X-Request-ID:/ {gsub("\r", "", $2); print $2}' /tmp/journey-headers.txt)
+          TICKET_ID=$(python -c 'import json; print(json.load(open("/tmp/journey-create.json"))["id"])')
           test -n "$REQUEST_ID"
-          echo "Edge correlation ID: $REQUEST_ID"
+          test -n "$TICKET_ID"
+
+          echo "Journey request ID: $REQUEST_ID"
+          echo "Journey ticket ID: $TICKET_ID"
           echo "OPSFORGE_REQUEST_ID=$REQUEST_ID" >> "$GITHUB_ENV"
+          echo "OPSFORGE_TICKET_ID=$TICKET_ID" >> "$GITHUB_ENV"
+
+          for attempt in $(seq 1 30); do
+            curl -fsS "http://127.0.0.1:8080/api/tickets/$TICKET_ID" > /tmp/journey-state.json
+            cat /tmp/journey-state.json
+
+            if python -c '
+          import json
+          state = json.load(open("/tmp/journey-state.json"))
+          processed = state.get("processing_status") == "processed"
+          event = any(item.get("event_type") == "ticket.processed" for item in state.get("events", []))
+          raise SystemExit(0 if processed and event else 1)
+          '; then
+              break
+            fi
+
+            if [ "$attempt" -eq 30 ]; then
+              echo "Ticket did not reach processed state"
+              docker compose logs --tail=200 api worker rabbitmq
+              exit 1
+            fi
+            sleep 1
+          done
 
           for attempt in $(seq 1 10); do
             if docker logs nightwatch-nginx 2>&1 | grep -F "$REQUEST_ID" >/dev/null && \
-               docker logs nightwatch-api 2>&1 | grep -F "$REQUEST_ID" >/dev/null; then
-              echo "Request ID found in both Nginx and API logs"
+               docker logs nightwatch-api 2>&1 | grep -F "$REQUEST_ID" >/dev/null && \
+               docker logs nightwatch-worker 2>&1 | grep -F "$REQUEST_ID" >/dev/null; then
+              echo "Request ID found across Nginx, API, and worker logs"
               exit 0
             fi
             sleep 1
           done
 
-          echo "Correlation ID was not present in both service logs"
+          echo "End-to-end request ID correlation failed"
           docker logs nightwatch-nginx 2>&1 | tail -100
           docker logs nightwatch-api 2>&1 | tail -100
+          docker logs nightwatch-worker 2>&1 | tail -100
           exit 1
 
       - name: Validate request correlation in Tempo
@@ -127,6 +179,39 @@ jobs:
         run: |
           test "$(docker inspect -f '{{.State.Health.Status}}' nightwatch-worker)" = "healthy"
           docker exec nightwatch-rabbit rabbitmqctl list_queues name consumers | awk '$1=="nightwatch-jobs" && $2>=1 {found=1} END {exit !found}'
+
+      - name: Validate business telemetry
+        run: |
+          curl -fsS http://127.0.0.1:8000/metrics | grep 'nightwatch_ticket_events_published_total'
+          curl -fsS http://127.0.0.1:8000/metrics | grep 'nightwatch_ticket_publish_duration_seconds'
+
+          for attempt in $(seq 1 20); do
+            WORKER_QUERY=$(curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=nightwatch_worker_db_operation_duration_seconds_count' || true)
+            RABBIT_QUERY=$(curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=rabbitmq_identity_info' || true)
+            SYNTHETIC_QUERY=$(curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=nightwatch_synthetic_customer_path_up' || true)
+
+            if echo "$WORKER_QUERY" | grep -q '"value"' && \
+               echo "$RABBIT_QUERY" | grep -q '"value"' && \
+               echo "$SYNTHETIC_QUERY" | python -c '
+          import json, sys
+          data = json.load(sys.stdin)
+          result = data.get("data", {}).get("result", [])
+          raise SystemExit(0 if result and float(result[0]["value"][1]) == 1.0 else 1)
+          '; then
+              echo "$WORKER_QUERY"
+              echo "$RABBIT_QUERY"
+              echo "$SYNTHETIC_QUERY"
+              exit 0
+            fi
+
+            echo "Waiting for business telemetry and synthetic success: attempt ${attempt}/20"
+            sleep 2
+          done
+
+          echo "Expected Phase 2 telemetry not available"
+          docker compose logs --tail=150 synthetic worker api
+          curl -fsS http://127.0.0.1:9090/api/v1/targets || true
+          exit 1
 
       - name: Validate baseline telemetry
         run: |
