@@ -7,6 +7,7 @@ import uuid
 
 from flask import Flask, g, jsonify, request
 from opentelemetry import trace
+import pika
 import psycopg
 from psycopg.rows import dict_row
 from prometheus_client import Counter, Gauge, Histogram
@@ -17,6 +18,8 @@ import redis
 SERVICE_NAME = os.getenv("SERVICE_NAME", "nightwatch-api")
 APP_ENV = os.getenv("APP_ENV", "dev")
 APP_VERSION = os.getenv("APP_VERSION", "dev")
+QUEUE_NAME = os.getenv("RABBITMQ_QUEUE", "nightwatch-jobs")
+VALID_SEVERITIES = {"SEV1", "SEV2", "SEV3", "SEV4"}
 
 app = Flask(__name__)
 metrics = PrometheusMetrics(app)
@@ -47,6 +50,15 @@ db_query_duration = Histogram(
     "nightwatch_db_query_duration_seconds",
     "Application database query duration",
     ["operation"],
+)
+ticket_events_published = Counter(
+    "nightwatch_ticket_events_published_total",
+    "Ticket background events published by result",
+    ["result"],
+)
+ticket_publish_duration = Histogram(
+    "nightwatch_ticket_publish_duration_seconds",
+    "Time spent publishing ticket events to RabbitMQ",
 )
 
 logger = logging.getLogger("nightwatch.api")
@@ -92,6 +104,23 @@ def get_db():
     )
 
 
+def get_rabbitmq_connection():
+    credentials = pika.PlainCredentials(
+        os.getenv("RABBITMQ_USER", "nightwatch"),
+        os.getenv("RABBITMQ_PASSWORD", ""),
+    )
+    return pika.BlockingConnection(
+        pika.ConnectionParameters(
+            host=os.getenv("RABBITMQ_HOST", "nightwatch-rabbit"),
+            credentials=credentials,
+            heartbeat=30,
+            blocked_connection_timeout=5,
+            connection_attempts=3,
+            retry_delay=1,
+        )
+    )
+
+
 def check_database():
     started = time.perf_counter()
     try:
@@ -125,6 +154,62 @@ def check_cache():
         dependency_latency.labels(dependency="redis", operation="ping").observe(
             time.perf_counter() - started
         )
+
+
+def check_rabbitmq():
+    started = time.perf_counter()
+    connection = None
+    try:
+        connection = get_rabbitmq_connection()
+        dependency_up.labels(dependency="rabbitmq").set(1)
+        dependency_checks.labels(dependency="rabbitmq", result="success").inc()
+    except Exception:
+        dependency_up.labels(dependency="rabbitmq").set(0)
+        dependency_checks.labels(dependency="rabbitmq", result="failure").inc()
+        raise
+    finally:
+        if connection and connection.is_open:
+            connection.close()
+        dependency_latency.labels(dependency="rabbitmq", operation="connect").observe(
+            time.perf_counter() - started
+        )
+
+
+def publish_ticket_event(ticket):
+    started = time.perf_counter()
+    connection = None
+    try:
+        connection = get_rabbitmq_connection()
+        channel = connection.channel()
+        channel.queue_declare(queue=QUEUE_NAME, durable=True)
+        channel.confirm_delivery()
+
+        payload = json.dumps(ticket, separators=(",", ":"))
+        published = channel.basic_publish(
+            exchange="",
+            routing_key=QUEUE_NAME,
+            body=payload,
+            properties=pika.BasicProperties(
+                delivery_mode=2,
+                content_type="application/json",
+                message_id=ticket["event_id"],
+                headers={"x-request-id": ticket["request_id"]},
+            ),
+            mandatory=True,
+        )
+        if published is False:
+            raise RuntimeError("RabbitMQ did not confirm ticket event")
+
+        dependency_up.labels(dependency="rabbitmq").set(1)
+        ticket_events_published.labels(result="success").inc()
+    except Exception:
+        dependency_up.labels(dependency="rabbitmq").set(0)
+        ticket_events_published.labels(result="failure").inc()
+        raise
+    finally:
+        if connection and connection.is_open:
+            connection.close()
+        ticket_publish_duration.observe(time.perf_counter() - started)
 
 
 @app.before_request
@@ -177,19 +262,18 @@ def readiness():
     dependencies = {}
     ready = True
 
-    try:
-        check_database()
-        dependencies["postgresql"] = "healthy"
-    except Exception as exc:
-        ready = False
-        dependencies["postgresql"] = f"unhealthy:{type(exc).__name__}"
-
-    try:
-        check_cache()
-        dependencies["redis"] = "healthy"
-    except Exception as exc:
-        ready = False
-        dependencies["redis"] = f"unhealthy:{type(exc).__name__}"
+    checks = (
+        ("postgresql", check_database),
+        ("redis", check_cache),
+        ("rabbitmq", check_rabbitmq),
+    )
+    for name, check in checks:
+        try:
+            check()
+            dependencies[name] = "healthy"
+        except Exception as exc:
+            ready = False
+            dependencies[name] = f"unhealthy:{type(exc).__name__}"
 
     status_code = 200 if ready else 503
     return (
@@ -228,17 +312,151 @@ def cache_health():
         return jsonify(cache="redis", status="unhealthy", error=type(exc).__name__), 503
 
 
+@app.get("/queue-health")
+def queue_health():
+    try:
+        check_rabbitmq()
+        return jsonify(queue="rabbitmq", status="healthy")
+    except Exception as exc:
+        return jsonify(queue="rabbitmq", status="unhealthy", error=type(exc).__name__), 503
+
+
 @app.get("/api/tickets")
 def tickets():
     with db_query_duration.labels(operation="tickets_list").time():
         with get_db() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT id, title, severity, status FROM tickets ORDER BY id"
+                    """
+                    SELECT id, title, severity, status, processing_status,
+                           request_id, created_at, processed_at
+                    FROM tickets
+                    ORDER BY id
+                    """
                 )
                 rows = cur.fetchall()
 
     return jsonify(rows)
+
+
+@app.post("/api/tickets")
+def create_ticket():
+    payload = request.get_json(silent=True) or {}
+    title = str(payload.get("title", "")).strip()
+    severity = str(payload.get("severity", "")).strip().upper()
+
+    if not title or len(title) > 200:
+        return jsonify(error="title must contain 1-200 characters"), 400
+    if severity not in VALID_SEVERITIES:
+        return jsonify(error="severity must be one of SEV1, SEV2, SEV3, SEV4"), 400
+
+    request_id = g.request_id
+    with db_query_duration.labels(operation="ticket_create").time():
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO tickets (
+                        title, severity, status, processing_status, request_id
+                    )
+                    VALUES (%s, %s, 'Open', 'queued', %s)
+                    RETURNING id, title, severity, status, processing_status,
+                              request_id, created_at, processed_at
+                    """,
+                    (title, severity, request_id),
+                )
+                ticket = cur.fetchone()
+
+    event_id = str(uuid.uuid4())
+    event = {
+        "event_id": event_id,
+        "event_type": "ticket.created",
+        "ticket_id": ticket["id"],
+        "request_id": request_id,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    try:
+        publish_ticket_event(event)
+    except Exception as exc:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE tickets SET processing_status = 'publish_failed' WHERE id = %s",
+                    (ticket["id"],),
+                )
+        log_event(
+            "error",
+            "ticket_event_publish_failed",
+            request_id=request_id,
+            ticket_id=ticket["id"],
+            event_id=event_id,
+            error_type=type(exc).__name__,
+        )
+        return (
+            jsonify(
+                error="ticket created but background processing could not be queued",
+                ticket_id=ticket["id"],
+                processing_status="publish_failed",
+            ),
+            503,
+        )
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, title, severity, status, processing_status,
+                       request_id, created_at, processed_at
+                FROM tickets
+                WHERE id = %s
+                """,
+                (ticket["id"],),
+            )
+            ticket = cur.fetchone()
+
+    log_event(
+        "info",
+        "ticket_created",
+        request_id=request_id,
+        ticket_id=ticket["id"],
+        event_id=event_id,
+        severity=severity,
+    )
+    return jsonify(ticket), 201
+
+
+@app.get("/api/tickets/<int:ticket_id>")
+def get_ticket(ticket_id):
+    with db_query_duration.labels(operation="ticket_get").time():
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, title, severity, status, processing_status,
+                           request_id, created_at, processed_at
+                    FROM tickets
+                    WHERE id = %s
+                    """,
+                    (ticket_id,),
+                )
+                ticket = cur.fetchone()
+                if ticket is None:
+                    return jsonify(error="ticket not found"), 404
+
+                cur.execute(
+                    """
+                    SELECT event_id, event_type, request_id, details, created_at
+                    FROM ticket_events
+                    WHERE ticket_id = %s
+                    ORDER BY created_at
+                    """,
+                    (ticket_id,),
+                )
+                events = cur.fetchall()
+
+    ticket["events"] = events
+    return jsonify(ticket)
 
 
 if __name__ == "__main__":
