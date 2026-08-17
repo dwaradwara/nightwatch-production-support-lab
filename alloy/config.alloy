@@ -1,5 +1,6 @@
 discovery.docker "nightwatch" {
-  host = "unix:///var/run/docker.sock"
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "5s"
 }
 
 discovery.relabel "docker_logs" {
@@ -13,11 +14,12 @@ discovery.relabel "docker_logs" {
 }
 
 loki.source.docker "nightwatch" {
-  host          = "unix:///var/run/docker.sock"
-  targets       = discovery.docker.nightwatch.targets
-  labels        = {"platform" = "docker"}
-  relabel_rules = discovery.relabel.docker_logs.rules
-  forward_to    = [loki.write.nightwatch.receiver]
+  host             = "unix:///var/run/docker.sock"
+  targets          = discovery.docker.nightwatch.targets
+  labels           = {"platform" = "docker"}
+  relabel_rules    = discovery.relabel.docker_logs.rules
+  refresh_interval = "5s"
+  forward_to       = [loki.write.nightwatch.receiver]
 }
 
 loki.write "nightwatch" {
