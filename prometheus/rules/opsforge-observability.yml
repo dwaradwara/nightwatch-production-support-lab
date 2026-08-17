@@ -1,0 +1,119 @@
+groups:
+  - name: opsforge-recording
+    interval: 15s
+    rules:
+      - record: opsforge:http_requests:rate5m
+        expr: sum(rate(flask_http_request_total[5m]))
+      - record: opsforge:http_5xx:rate5m
+        expr: sum(rate(flask_http_request_total{status=~"5.."}[5m]))
+      - record: opsforge:http_5xx:ratio5m
+        expr: sum(rate(flask_http_request_total{status=~"5.."}[5m])) / clamp_min(sum(rate(flask_http_request_total[5m])), 0.000001)
+      - record: opsforge:http_request_duration_seconds:p95_5m
+        expr: histogram_quantile(0.95, sum by (le) (rate(flask_http_request_duration_seconds_bucket{path!="/metrics"}[5m])))
+      - record: opsforge:http_request_duration_seconds:p99_5m
+        expr: histogram_quantile(0.99, sum by (le) (rate(flask_http_request_duration_seconds_bucket{path!="/metrics"}[5m])))
+      - record: opsforge:postgres_connections
+        expr: sum(pg_stat_activity_count{datname="nightwatch"})
+      - record: opsforge:postgres_active_connections
+        expr: sum(pg_stat_activity_count{datname="nightwatch",state="active"})
+      - record: opsforge:postgres_max_transaction_seconds
+        expr: max(pg_stat_activity_max_tx_duration{datname="nightwatch"})
+      - record: opsforge:postgres_locks
+        expr: sum(pg_locks_count{datname="nightwatch"})
+      - record: opsforge:rabbitmq_ready_messages
+        expr: sum(rabbitmq_queue_messages_ready{queue="nightwatch-jobs"})
+      - record: opsforge:rabbitmq_unacked_messages
+        expr: sum(rabbitmq_queue_messages_unacked{queue="nightwatch-jobs"})
+      - record: opsforge:rabbitmq_consumers
+        expr: sum(rabbitmq_queue_consumers{queue="nightwatch-jobs"})
+      - record: opsforge:worker_success:rate5m
+        expr: sum(rate(nightwatch_worker_jobs_processed_total{result="success"}[5m]))
+      - record: opsforge:worker_failure:rate5m
+        expr: sum(rate(nightwatch_worker_jobs_processed_total{result="failure"}[5m]))
+      - record: opsforge:worker_job_duration_seconds:p95_5m
+        expr: histogram_quantile(0.95, sum by (le) (rate(nightwatch_worker_job_duration_seconds_bucket[5m])))
+
+  - name: opsforge-detection
+    interval: 15s
+    rules:
+      - alert: OPSFORGECustomerJourneyDown
+        expr: nightwatch_synthetic_customer_path_up == 0
+        for: 30s
+        labels:
+          severity: SEV1
+          service: customer-path
+        annotations:
+          summary: "Synthetic customer transaction is failing"
+          description: "The end-to-end create/process/update ticket journey has failed for at least 30 seconds."
+      - alert: OPSFORGEApiHigh5xxRatio
+        expr: opsforge:http_5xx:ratio5m > 0.05
+        for: 2m
+        labels:
+          severity: SEV2
+          service: api
+        annotations:
+          summary: "API 5xx ratio is above 5%"
+          description: "The five-minute API server-error ratio has remained above 5%."
+      - alert: OPSFORGEApiHighP95Latency
+        expr: opsforge:http_request_duration_seconds:p95_5m > 0.5
+        for: 2m
+        labels:
+          severity: SEV2
+          service: api
+        annotations:
+          summary: "API p95 latency is above 500 ms"
+          description: "The five-minute p95 request latency has remained above the simulated service objective."
+      - alert: OPSFORGEDependencyDown
+        expr: nightwatch_dependency_up == 0
+        for: 1m
+        labels:
+          severity: SEV2
+          service: dependency
+        annotations:
+          summary: "API dependency health check is failing"
+          description: "At least one API dependency is currently unreachable."
+      - alert: OPSFORGEPostgresExporterDown
+        expr: pg_up == 0
+        for: 1m
+        labels:
+          severity: SEV2
+          service: postgresql
+        annotations:
+          summary: "PostgreSQL exporter cannot reach the database"
+          description: "Prometheus is scraping the exporter, but the exporter reports PostgreSQL unavailable."
+      - alert: OPSFORGELongDatabaseTransaction
+        expr: opsforge:postgres_max_transaction_seconds > 30
+        for: 1m
+        labels:
+          severity: SEV3
+          service: postgresql
+        annotations:
+          summary: "Long-running PostgreSQL transaction detected"
+          description: "At least one transaction has remained open for more than 30 seconds."
+      - alert: OPSFORGERedisDown
+        expr: redis_up == 0
+        for: 1m
+        labels:
+          severity: SEV2
+          service: redis
+        annotations:
+          summary: "Redis exporter reports Redis unavailable"
+          description: "The Redis metrics exporter cannot reach the cache."
+      - alert: OPSFORGERabbitQueueBacklog
+        expr: opsforge:rabbitmq_ready_messages > 10
+        for: 2m
+        labels:
+          severity: SEV2
+          service: rabbitmq
+        annotations:
+          summary: "RabbitMQ ticket queue backlog is growing"
+          description: "More than 10 ticket events have remained ready for processing for at least two minutes."
+      - alert: OPSFORGEWorkerFailures
+        expr: opsforge:worker_failure:rate5m > 0
+        for: 1m
+        labels:
+          severity: SEV2
+          service: worker
+        annotations:
+          summary: "Background worker is failing jobs"
+          description: "Worker failures have been observed during the last five minutes."
