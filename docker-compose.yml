@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:17-alpine
+    image: postgres:17.10-alpine3.23
     container_name: nightwatch-db
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-nightwatch}
@@ -18,7 +18,7 @@ services:
     networks: [nightwatch-net]
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4.9-alpine
     container_name: nightwatch-redis
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -28,13 +28,17 @@ services:
     networks: [nightwatch-net]
 
   rabbitmq:
-    image: rabbitmq:management-alpine
+    image: rabbitmq:4.3.1-management-alpine
     container_name: nightwatch-rabbit
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-nightwatch}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Copy .env.example to .env and set RABBITMQ_PASSWORD}
     ports:
       - "127.0.0.1:15672:15672"
+    expose:
+      - "15692"
+    volumes:
+      - ./rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 5s
@@ -83,12 +87,25 @@ services:
     build: ./worker
     container_name: nightwatch-worker
     environment:
+      SERVICE_NAME: nightwatch-worker
+      APP_ENV: ${APP_ENV:-dev}
+      APP_VERSION: ${APP_VERSION:-dev}
+      WORKER_METRICS_PORT: "9100"
       RABBITMQ_HOST: nightwatch-rabbit
       RABBITMQ_USER: ${RABBITMQ_USER:-nightwatch}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Copy .env.example to .env and set RABBITMQ_PASSWORD}
+      RABBITMQ_QUEUE: nightwatch-jobs
+    expose:
+      - "9100"
     depends_on:
       rabbitmq:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; body=urllib.request.urlopen('http://127.0.0.1:9100/metrics', timeout=3).read().decode(); raise SystemExit(0 if 'nightwatch_worker_ready 1.0' in body else 1)"]
+      interval: 5s
+      timeout: 4s
+      retries: 10
+      start_period: 5s
     networks: [nightwatch-net]
 
   nginx:
@@ -111,7 +128,7 @@ services:
     networks: [nightwatch-net]
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.12.0
     container_name: nightwatch-prometheus
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
@@ -119,6 +136,10 @@ services:
       - "127.0.0.1:9090:9090"
     depends_on:
       api:
+        condition: service_healthy
+      worker:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     networks: [nightwatch-net]
 
@@ -133,7 +154,7 @@ services:
     networks: [nightwatch-net]
 
   alloy:
-    image: grafana/alloy:latest
+    image: grafana/alloy:v1.18.0
     container_name: nightwatch-alloy
     command: ["run", "/etc/alloy/config.alloy"]
     volumes:
