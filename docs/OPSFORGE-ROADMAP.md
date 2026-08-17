@@ -63,23 +63,40 @@ Evidence and operational semantics are documented in `docs/CUSTOMER-JOURNEY.md`.
 
 ## Phase 3 — Delivery Pipeline
 
-Goal: model safe change delivery.
+Status: implemented and CI-validated on August 17, 2026.
 
-Flow:
+Goal: model safe change delivery and evidence-based rollback.
 
-`branch -> PR -> tests -> build -> staging -> synthetic validation -> production -> post-deploy verification`
+Delivered capabilities:
+- Git-derived versioned application images
+- staging and production runtime isolation using separate Compose projects, container prefixes, networks, and host ports
+- schema compatibility validation before release acceptance
+- reusable build, deploy, verify, promote, rollback, and teardown procedures
+- release/environment identity verification through `/version`
+- full customer journey as a staging and production deployment gate
+- request/log/trace/worker/queue/synthetic/Prometheus/Grafana verification during release acceptance
+- local current/previous/candidate release state and rollback history
+- controlled release-regression build for rollback drills
+- automatic production rollback to the recorded last-good release when post-deploy customer validation fails
+- mandatory complete verification after rollback
 
-Planned work:
-- real automated API tests
-- Compose configuration validation
-- container image version/tag strategy
-- staging/production logical separation
-- migration validation
-- deployment health gate
-- rollback procedure
+Validated flow:
 
-Key exercise:
-- bad release producing customer impact followed by evidence-based rollback
+`branch -> validation -> versioned build -> staging -> customer/observability gate -> production -> post-deploy gate -> accept or rollback -> recovery verification`
+
+Key exercise completed:
+- accepted release `git-b980324068e6`
+- controlled candidate `git-b980324068e6-regression` retained readiness but broke customer ticket creation with HTTP 500
+- candidate was rejected
+- production was restored to `git-b980324068e6`
+- complete post-rollback verification and an independent second verification passed
+
+Exit criteria:
+- one release can be promoted through staging to production with defensible verification
+- a customer-impacting candidate can be rejected even when infrastructure health remains green
+- rollback restores the recorded last-good release and proves recovery from the customer path
+
+Operational design is documented in `docs/DELIVERY-PIPELINE.md`; validation evidence is recorded in `docs/PHASE3-STATUS.md`.
 
 ## Phase 4 — Production Observability
 

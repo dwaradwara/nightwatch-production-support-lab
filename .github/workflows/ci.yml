@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  validate:
+  validate-delivery:
     runs-on: ubuntu-latest
 
     steps:
@@ -20,34 +20,21 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install API dependencies
-        run: pip install -r api/requirements.txt
+      - name: Install runtime dependencies
+        run: |
+          pip install -r api/requirements.txt
+          pip install -r worker/requirements.txt
+          pip install -r synthetic/requirements.txt
 
-      - name: Install worker dependencies
-        run: pip install -r worker/requirements.txt
-
-      - name: Install synthetic dependencies
-        run: pip install -r synthetic/requirements.txt
-
-      - name: Python syntax checks
+      - name: Static validation
         run: |
           python -m py_compile api/app.py
           python -m py_compile worker/worker.py
           python -m py_compile synthetic/synthetic.py
+          python -c "import pika, psycopg, redis, prometheus_client; print('runtime imports ok')"
+          bash -n scripts/*.sh
 
-      - name: Validate runtime dependencies
-        run: |
-          python -c "import pika, psycopg, redis, prometheus_client; print(pika.__version__)"
-          python -c "import synthetic.synthetic; print('synthetic imports ok')"
-
-      - name: Build NIGHTWATCH images
-        run: |
-          docker build -t nightwatch-api:ci ./api
-          docker build -t nightwatch-worker:ci ./worker
-          docker build -t nightwatch-nginx:ci ./nginx
-          docker build -t nightwatch-synthetic:ci ./synthetic
-
-      - name: Prepare CI runtime configuration
+      - name: Prepare CI secrets and TLS
         run: |
           cp .env.example .env
           openssl req -x509 -newkey rsa:2048 -nodes \
@@ -57,251 +44,88 @@ jobs:
             -subj "/CN=nightwatch.local" \
             -addext "subjectAltName=DNS:nightwatch.local"
 
-      - name: Validate Docker Compose configuration
-        run: docker compose config --quiet
-
-      - name: Start OPSFORGE stack
-        run: docker compose up -d --build
-
-      - name: Wait for public readiness
+      - name: Define release versions
         run: |
-          for attempt in $(seq 1 40); do
-            if curl -fsS http://127.0.0.1:8080/health/ready > /tmp/readiness.json; then
-              cat /tmp/readiness.json
-              grep -q '"rabbitmq":"healthy"' /tmp/readiness.json
-              exit 0
-            fi
-            echo "Waiting for readiness: attempt ${attempt}/40"
-            docker compose ps
-            sleep 2
-          done
-          echo "OPSFORGE stack did not become ready"
-          docker compose ps
-          docker compose logs --tail=200
-          exit 1
+          SHORT_SHA="${GITHUB_SHA::12}"
+          echo "GOOD_RELEASE=git-$SHORT_SHA" >> "$GITHUB_ENV"
+          echo "BAD_RELEASE=git-$SHORT_SHA-regression" >> "$GITHUB_ENV"
 
-      - name: Validate browser preflight for customer ticket workflow
-        run: |
-          curl -fsS -i -X OPTIONS \
-            -H 'Origin: http://localhost:3001' \
-            -H 'Access-Control-Request-Method: PATCH' \
-            -H 'Access-Control-Request-Headers: Content-Type, X-Customer-ID' \
-            http://127.0.0.1:8080/api/tickets/1 > /tmp/preflight.txt
-          cat /tmp/preflight.txt
-          grep -qi '^Access-Control-Allow-Origin: http://localhost:3001' /tmp/preflight.txt
-          grep -qi '^Access-Control-Allow-Methods: GET, POST, PATCH, OPTIONS' /tmp/preflight.txt
-          grep -qi '^Access-Control-Allow-Headers: Authorization, Content-Type, X-Customer-ID' /tmp/preflight.txt
-
-      - name: Validate end-to-end ticket journey
-        run: |
-          CUSTOMER_ID="ci-customer"
-          curl -fsS \
-            -X POST \
-            -H 'Content-Type: application/json' \
-            -H "X-Customer-ID: $CUSTOMER_ID" \
-            -D /tmp/journey-headers.txt \
-            -d '{"title":"CI end-to-end customer journey","severity":"SEV3"}' \
-            http://127.0.0.1:8080/api/tickets \
-            -o /tmp/journey-create.json
-
-          cat /tmp/journey-create.json
-
-          REQUEST_ID=$(awk 'BEGIN{IGNORECASE=1} /^X-Request-ID:/ {gsub("\r", "", $2); print $2}' /tmp/journey-headers.txt)
-          TICKET_ID=$(python -c 'import json; print(json.load(open("/tmp/journey-create.json"))["id"])')
-          test -n "$REQUEST_ID"
-          test -n "$TICKET_ID"
-
-          echo "Journey request ID: $REQUEST_ID"
-          echo "Journey ticket ID: $TICKET_ID"
-          echo "OPSFORGE_REQUEST_ID=$REQUEST_ID" >> "$GITHUB_ENV"
-          echo "OPSFORGE_TICKET_ID=$TICKET_ID" >> "$GITHUB_ENV"
-
-          for attempt in $(seq 1 30); do
-            curl -fsS \
-              -H "X-Customer-ID: $CUSTOMER_ID" \
-              "http://127.0.0.1:8080/api/tickets/$TICKET_ID" > /tmp/journey-state.json
-            cat /tmp/journey-state.json
-
-            if python -c '
-          import json
-          state = json.load(open("/tmp/journey-state.json"))
-          processed = state.get("processing_status") == "processed"
-          customer = state.get("customer_id") == "ci-customer"
-          event = any(item.get("event_type") == "ticket.processed" for item in state.get("events", []))
-          raise SystemExit(0 if processed and customer and event else 1)
-          '; then
-              break
-            fi
-
-            if [ "$attempt" -eq 30 ]; then
-              echo "Ticket did not reach processed state"
-              docker compose logs --tail=200 api worker rabbitmq
-              exit 1
-            fi
-            sleep 1
-          done
-
-          curl -fsS \
-            -X PATCH \
-            -H 'Content-Type: application/json' \
-            -H "X-Customer-ID: $CUSTOMER_ID" \
-            -d '{"status":"Resolved"}' \
-            "http://127.0.0.1:8080/api/tickets/$TICKET_ID" \
-            -o /tmp/journey-update.json
-
-          cat /tmp/journey-update.json
-          python -c '
-          import json
-          state = json.load(open("/tmp/journey-update.json"))
-          raise SystemExit(0 if state.get("status") == "Resolved" and state.get("customer_id") == "ci-customer" else 1)
-          '
-
-          curl -fsS \
-            -H "X-Customer-ID: $CUSTOMER_ID" \
-            "http://127.0.0.1:8080/api/tickets/$TICKET_ID" > /tmp/journey-final.json
-
-          python -c '
-          import json
-          state = json.load(open("/tmp/journey-final.json"))
-          event = any(
-              item.get("event_type") == "ticket.status_updated"
-              and item.get("details", {}).get("status") == "Resolved"
-              for item in state.get("events", [])
-          )
-          raise SystemExit(0 if state.get("status") == "Resolved" and event else 1)
-          '
-
-          for attempt in $(seq 1 10); do
-            if docker logs nightwatch-nginx 2>&1 | grep -F "$REQUEST_ID" >/dev/null && \
-               docker logs nightwatch-api 2>&1 | grep -F "$REQUEST_ID" >/dev/null && \
-               docker logs nightwatch-worker 2>&1 | grep -F "$REQUEST_ID" >/dev/null; then
-              echo "Request ID found across Nginx, API, and worker logs"
-              exit 0
-            fi
-            sleep 1
-          done
-
-          echo "End-to-end request ID correlation failed"
-          docker logs nightwatch-nginx 2>&1 | tail -100
-          docker logs nightwatch-api 2>&1 | tail -100
-          docker logs nightwatch-worker 2>&1 | tail -100
-          exit 1
-
-      - name: Validate request correlation in Tempo
-        run: |
-          test -n "$OPSFORGE_REQUEST_ID"
-          QUERY="{ span.\"nightwatch.request_id\" = \"$OPSFORGE_REQUEST_ID\" }"
-
-          for attempt in $(seq 1 20); do
-            TRACE_RESULT=$(curl -fsS -G http://127.0.0.1:3200/api/search \
-              --data-urlencode "q=$QUERY" || true)
-
-            if echo "$TRACE_RESULT" | grep -q '"traceID"'; then
-              echo "$TRACE_RESULT"
-              echo "Request ID found in Tempo trace attributes: $OPSFORGE_REQUEST_ID"
-              exit 0
-            fi
-
-            echo "Waiting for correlated trace: attempt ${attempt}/20"
-            sleep 2
-          done
-
-          echo "Tempo did not return a trace for request ID: $OPSFORGE_REQUEST_ID"
-          docker logs nightwatch-api 2>&1 | tail -100
-          docker logs nightwatch-tempo 2>&1 | tail -100
-          exit 1
-
-      - name: Validate worker consumer health
-        run: |
-          test "$(docker inspect -f '{{.State.Health.Status}}' nightwatch-worker)" = "healthy"
-          docker exec nightwatch-rabbit rabbitmqctl list_queues name consumers | awk '$1=="nightwatch-jobs" && $2>=1 {found=1} END {exit !found}'
-
-      - name: Validate business telemetry
-        run: |
-          curl -fsS http://127.0.0.1:8000/metrics | grep 'nightwatch_ticket_events_published_total'
-          curl -fsS http://127.0.0.1:8000/metrics | grep 'nightwatch_ticket_publish_duration_seconds'
-
-          for attempt in $(seq 1 20); do
-            WORKER_QUERY=$(curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=nightwatch_worker_db_operation_duration_seconds_count' || true)
-            RABBIT_QUERY=$(curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=rabbitmq_identity_info' || true)
-            SYNTHETIC_QUERY=$(curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=nightwatch_synthetic_customer_path_up' || true)
-
-            if echo "$WORKER_QUERY" | grep -q '"value"' && \
-               echo "$RABBIT_QUERY" | grep -q '"value"' && \
-               echo "$SYNTHETIC_QUERY" | python -c '
-          import json, sys
-          data = json.load(sys.stdin)
-          result = data.get("data", {}).get("result", [])
-          raise SystemExit(0 if result and float(result[0]["value"][1]) == 1.0 else 1)
-          '; then
-              echo "$WORKER_QUERY"
-              echo "$RABBIT_QUERY"
-              echo "$SYNTHETIC_QUERY"
-              exit 0
-            fi
-
-            echo "Waiting for business telemetry and synthetic success: attempt ${attempt}/20"
-            sleep 2
-          done
-
-          echo "Expected Phase 2 telemetry not available"
-          docker compose logs --tail=150 synthetic worker api
-          curl -fsS http://127.0.0.1:9090/api/v1/targets || true
-          exit 1
-
-      - name: Validate baseline telemetry
-        run: |
-          curl -fsS http://127.0.0.1:8000/metrics | grep 'nightwatch_dependency_latency_seconds'
-          curl -fsS http://127.0.0.1:8000/metrics | grep 'nightwatch_db_query_duration_seconds'
-
-          for attempt in $(seq 1 15); do
-            WORKER_QUERY=$(curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=nightwatch_worker_ready' || true)
-            RABBIT_QUERY=$(curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=rabbitmq_identity_info' || true)
-            if echo "$WORKER_QUERY" | grep -q '"value"' && echo "$RABBIT_QUERY" | grep -q '"value"'; then
-              echo "$WORKER_QUERY"
-              echo "$RABBIT_QUERY"
-              exit 0
-            fi
-            echo "Waiting for Prometheus scrapes: attempt ${attempt}/15"
-            sleep 2
-          done
-
-          echo "Expected worker/RabbitMQ telemetry not available in Prometheus"
-          curl -fsS http://127.0.0.1:9090/api/v1/targets || true
-          exit 1
-
-      - name: Validate Grafana provisioning
+      - name: Validate isolated Compose environments
         run: |
           set -a
           source .env
           set +a
+          source scripts/release_env.sh
 
-          for attempt in $(seq 1 20); do
-            if curl -fsS http://127.0.0.1:3000/api/health > /tmp/grafana-health.json; then
-              cat /tmp/grafana-health.json
+          configure_opsforge_environment staging
+          RELEASE_VERSION="$GOOD_RELEASE" opsforge_compose config --quiet
 
-              curl -fsS -u "$GRAFANA_ADMIN_USER:$GRAFANA_ADMIN_PASSWORD" \
-                http://127.0.0.1:3000/api/datasources/uid/prometheus | grep '"uid":"prometheus"'
-              curl -fsS -u "$GRAFANA_ADMIN_USER:$GRAFANA_ADMIN_PASSWORD" \
-                http://127.0.0.1:3000/api/datasources/uid/loki | grep '"uid":"loki"'
-              curl -fsS -u "$GRAFANA_ADMIN_USER:$GRAFANA_ADMIN_PASSWORD" \
-                http://127.0.0.1:3000/api/datasources/uid/tempo | grep '"uid":"tempo"'
+          configure_opsforge_environment production
+          RELEASE_VERSION="$GOOD_RELEASE" opsforge_compose config --quiet
 
-              echo "Grafana health and datasource provisioning validated"
-              exit 0
-            fi
-            echo "Waiting for Grafana: attempt ${attempt}/20"
-            sleep 2
-          done
+      - name: Build versioned release images
+        run: bash scripts/build_release.sh "$GOOD_RELEASE"
 
-          echo "Grafana did not become healthy"
-          docker logs nightwatch-grafana 2>&1 | tail -100
-          exit 1
+      - name: Promote release to staging
+        run: bash scripts/promote_release.sh staging "$GOOD_RELEASE"
 
-      - name: Show service state
+      - name: Prove staging release identity
+        run: |
+          source scripts/release_env.sh
+          load_opsforge_secrets
+          configure_opsforge_environment staging
+          curl -fsS "http://127.0.0.1:$NGINX_HTTP_HOST_PORT/version" | \
+            python -c 'import json,sys,os; p=json.load(sys.stdin); assert p["environment"]=="staging"; assert p["version"]==os.environ["GOOD_RELEASE"]'
+
+      - name: Retire staging after promotion gate
+        run: bash scripts/down_environment.sh staging --volumes
+
+      - name: Promote verified release to production
+        run: bash scripts/promote_release.sh production "$GOOD_RELEASE"
+
+      - name: Assert production last-good state
+        run: |
+          test "$(cat .opsforge/state/production.current)" = "$GOOD_RELEASE"
+          source scripts/release_env.sh
+          load_opsforge_secrets
+          configure_opsforge_environment production
+          curl -fsS "http://127.0.0.1:$NGINX_HTTP_HOST_PORT/version" | \
+            python -c 'import json,sys,os; p=json.load(sys.stdin); assert p["environment"]=="production"; assert p["version"]==os.environ["GOOD_RELEASE"]'
+
+      - name: Build controlled bad release
+        run: bash scripts/build_release.sh "$BAD_RELEASE" ticket-create-500
+
+      - name: Exercise failed production deployment and rollback
+        run: |
+          set +e
+          bash scripts/promote_release.sh production "$BAD_RELEASE"
+          PROMOTION_STATUS=$?
+          set -e
+
+          if [[ "$PROMOTION_STATUS" -eq 0 ]]; then
+            echo "Bad release was incorrectly accepted" >&2
+            exit 1
+          fi
+
+          test "$(cat .opsforge/state/production.current)" = "$GOOD_RELEASE"
+          grep -F "$BAD_RELEASE" .opsforge/state/rollback-history.tsv | grep -F "$GOOD_RELEASE"
+          echo "Bad release rejected and last-good production release restored"
+
+      - name: Verify production after rollback
+        run: bash scripts/verify_release.sh production "$GOOD_RELEASE"
+
+      - name: Show release evidence
         if: always()
-        run: docker compose ps
+        run: |
+          echo "--- release manifests ---"
+          find .opsforge/releases -maxdepth 1 -type f -print -exec cat {} \; 2>/dev/null || true
+          echo "--- release state ---"
+          find .opsforge/state -maxdepth 1 -type f -print -exec cat {} \; 2>/dev/null || true
 
-      - name: Stop OPSFORGE stack
+      - name: Clean staging environment
         if: always()
-        run: docker compose down -v
+        run: bash scripts/down_environment.sh staging --volumes || true
+
+      - name: Clean production environment
+        if: always()
+        run: bash scripts/down_environment.sh production --volumes || true
