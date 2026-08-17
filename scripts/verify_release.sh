@@ -16,13 +16,48 @@ BASE_URL="http://127.0.0.1:$NGINX_HTTP_HOST_PORT"
 CUSTOMER_ID="verify-$ENVIRONMENT-$VERSION"
 REQUEST_ID=""
 TICKET_ID=""
+CURRENT_CHECK="initialization"
+DIAGNOSTIC_DIR="$ROOT/.opsforge/diagnostics/$ENVIRONMENT-$VERSION"
+mkdir -p "$DIAGNOSTIC_DIR"
 
 show_failure_evidence() {
-  echo "OPSFORGE release verification FAILED: environment=$ENVIRONMENT version=$VERSION" >&2
-  opsforge_compose ps >&2 || true
-  opsforge_compose logs --no-color --tail=120 nginx api worker synthetic rabbitmq postgres-exporter redis-exporter prometheus grafana alloy loki tempo >&2 || true
+  local exit_code=$?
+  printf 'environment=%s\nversion=%s\ncheck=%s\nexit_code=%s\n' \
+    "$ENVIRONMENT" "$VERSION" "$CURRENT_CHECK" "$exit_code" \
+    > "$DIAGNOSTIC_DIR/failure.txt"
+
+  echo "OPSFORGE release verification FAILED: environment=$ENVIRONMENT version=$VERSION check=$CURRENT_CHECK" >&2
+  opsforge_compose ps > "$DIAGNOSTIC_DIR/compose-ps.txt" 2>&1 || true
+  opsforge_compose logs --no-color --tail=160 \
+    nginx api worker synthetic rabbitmq postgres-exporter redis-exporter prometheus grafana alloy loki tempo \
+    > "$DIAGNOSTIC_DIR/service-logs.txt" 2>&1 || true
+
+  curl -fsS "http://127.0.0.1:$PROMETHEUS_HOST_PORT/api/v1/targets" \
+    > "$DIAGNOSTIC_DIR/prometheus-targets.json" 2>/dev/null || true
+  curl -fsS "http://127.0.0.1:$PROMETHEUS_HOST_PORT/api/v1/rules" \
+    > "$DIAGNOSTIC_DIR/prometheus-rules.json" 2>/dev/null || true
+  curl -fsS "http://127.0.0.1:$PROMETHEUS_HOST_PORT/api/v1/label/__name__/values" \
+    > "$DIAGNOSTIC_DIR/prometheus-metric-names.json" 2>/dev/null || true
+  curl -fsS "http://127.0.0.1:$LOKI_HOST_PORT/ready" \
+    > "$DIAGNOSTIC_DIR/loki-ready.txt" 2>/dev/null || true
+  curl -fsS "http://127.0.0.1:$GRAFANA_HOST_PORT/api/health" \
+    > "$DIAGNOSTIC_DIR/grafana-health.json" 2>/dev/null || true
+  curl -fsS -u "$GRAFANA_ADMIN_USER:$GRAFANA_ADMIN_PASSWORD" \
+    "http://127.0.0.1:$GRAFANA_HOST_PORT/api/dashboards/uid/opsforge-l2-operations" \
+    > "$DIAGNOSTIC_DIR/grafana-dashboard.json" 2>/dev/null || true
+
+  cat "$DIAGNOSTIC_DIR/compose-ps.txt" >&2 || true
+  cat "$DIAGNOSTIC_DIR/service-logs.txt" >&2 || true
+  return "$exit_code"
 }
 trap show_failure_evidence ERR
+
+run_check() {
+  CURRENT_CHECK="$1"
+  shift
+  echo "OPSFORGE verification check: $CURRENT_CHECK"
+  "$@"
+}
 
 wait_for_readiness() {
   for attempt in $(seq 1 45); do
@@ -339,19 +374,19 @@ validate_grafana() {
   return 1
 }
 
-wait_for_readiness
-validate_version
-validate_schema_contract
-validate_browser_contract
-validate_customer_journey
-validate_log_correlation
-validate_loki_correlation
-validate_trace_correlation
-validate_worker_and_queue
-validate_business_telemetry
-validate_observability_targets
-validate_prometheus_rules
-validate_grafana
+run_check "application readiness" wait_for_readiness
+run_check "release identity" validate_version
+run_check "database schema contract" validate_schema_contract
+run_check "browser CORS contract" validate_browser_contract
+run_check "customer journey" validate_customer_journey
+run_check "container log correlation" validate_log_correlation
+run_check "centralized Loki correlation" validate_loki_correlation
+run_check "Tempo trace correlation" validate_trace_correlation
+run_check "worker and queue availability" validate_worker_and_queue
+run_check "business telemetry" validate_business_telemetry
+run_check "dependency and queue metrics" validate_observability_targets
+run_check "Prometheus rules" validate_prometheus_rules
+run_check "Grafana L2 console" validate_grafana
 
 trap - ERR
 printf '%s\n' "OPSFORGE release verification PASSED: environment=$ENVIRONMENT version=$VERSION"
