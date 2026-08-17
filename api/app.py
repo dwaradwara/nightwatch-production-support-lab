@@ -8,8 +8,9 @@ import uuid
 from flask import Flask, g, jsonify, request
 import psycopg
 from psycopg.rows import dict_row
-import redis
+from prometheus_client import Counter, Gauge, Histogram
 from prometheus_flask_exporter import PrometheusMetrics
+import redis
 
 
 SERVICE_NAME = os.getenv("SERVICE_NAME", "nightwatch-api")
@@ -18,6 +19,34 @@ APP_VERSION = os.getenv("APP_VERSION", "dev")
 
 app = Flask(__name__)
 metrics = PrometheusMetrics(app)
+
+app_info = Gauge(
+    "nightwatch_app_info",
+    "Static NIGHTWATCH application metadata",
+    ["service", "environment", "version"],
+)
+app_info.labels(service=SERVICE_NAME, environment=APP_ENV, version=APP_VERSION).set(1)
+
+dependency_up = Gauge(
+    "nightwatch_dependency_up",
+    "Whether an API dependency is currently reachable",
+    ["dependency"],
+)
+dependency_checks = Counter(
+    "nightwatch_dependency_checks_total",
+    "Dependency health checks by result",
+    ["dependency", "result"],
+)
+dependency_latency = Histogram(
+    "nightwatch_dependency_latency_seconds",
+    "Latency observed while checking API dependencies",
+    ["dependency", "operation"],
+)
+db_query_duration = Histogram(
+    "nightwatch_db_query_duration_seconds",
+    "Application database query duration",
+    ["operation"],
+)
 
 logger = logging.getLogger("nightwatch.api")
 logger.setLevel(logging.INFO)
@@ -63,14 +92,38 @@ def get_db():
 
 
 def check_database():
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT 1")
-            cur.fetchone()
+    started = time.perf_counter()
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+                cur.fetchone()
+        dependency_up.labels(dependency="postgresql").set(1)
+        dependency_checks.labels(dependency="postgresql", result="success").inc()
+    except Exception:
+        dependency_up.labels(dependency="postgresql").set(0)
+        dependency_checks.labels(dependency="postgresql", result="failure").inc()
+        raise
+    finally:
+        dependency_latency.labels(dependency="postgresql", operation="health_check").observe(
+            time.perf_counter() - started
+        )
 
 
 def check_cache():
-    cache.ping()
+    started = time.perf_counter()
+    try:
+        cache.ping()
+        dependency_up.labels(dependency="redis").set(1)
+        dependency_checks.labels(dependency="redis", result="success").inc()
+    except Exception:
+        dependency_up.labels(dependency="redis").set(0)
+        dependency_checks.labels(dependency="redis", result="failure").inc()
+        raise
+    finally:
+        dependency_latency.labels(dependency="redis", operation="ping").observe(
+            time.perf_counter() - started
+        )
 
 
 @app.before_request
@@ -170,12 +223,13 @@ def cache_health():
 
 @app.get("/api/tickets")
 def tickets():
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT id, title, severity, status FROM tickets ORDER BY id"
-            )
-            rows = cur.fetchall()
+    with db_query_duration.labels(operation="tickets_list").time():
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id, title, severity, status FROM tickets ORDER BY id"
+                )
+                rows = cur.fetchall()
 
     return jsonify(rows)
 
