@@ -33,6 +33,7 @@ if [[ "$DEPLOY_STATUS" -ne 0 ]]; then
   printf 'environment=%s\nversion=%s\nstage=deploy\nstatus=failed\nexit_code=%s\n' \
     "$ENVIRONMENT" "$VERSION" "$DEPLOY_STATUS" \
     > "$DIAGNOSTIC_DIR/promotion-state.txt"
+  echo "::error title=OPSFORGE deployment failed::environment=$ENVIRONMENT version=$VERSION exit_code=$DEPLOY_STATUS"
   echo "Deployment failed before release verification: environment=$ENVIRONMENT version=$VERSION" >&2
   exit "$DEPLOY_STATUS"
 fi
@@ -60,6 +61,13 @@ fi
 printf 'environment=%s\nversion=%s\nstage=verification\nstatus=failed\nexit_code=%s\n' \
   "$ENVIRONMENT" "$VERSION" "$VERIFY_STATUS" \
   > "$DIAGNOSTIC_DIR/promotion-state.txt"
+
+FAILED_CHECK="unknown verification check"
+if [[ -f "$DIAGNOSTIC_DIR/failure.txt" ]]; then
+  FAILED_CHECK=$(awk -F= '$1=="check" {print substr($0, index($0, "=") + 1)}' "$DIAGNOSTIC_DIR/failure.txt")
+  [[ -n "$FAILED_CHECK" ]] || FAILED_CHECK="unknown verification check"
+fi
+echo "::error title=OPSFORGE release verification failed::environment=$ENVIRONMENT version=$VERSION check=$FAILED_CHECK"
 echo "Promotion rejected: environment=$ENVIRONMENT version=$VERSION" >&2
 
 if [[ "$ENVIRONMENT" = "production" && -n "$CURRENT_VERSION" ]]; then
