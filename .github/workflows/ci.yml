@@ -80,22 +80,25 @@ jobs:
           docker compose logs --tail=200
           exit 1
 
-      - name: Validate browser preflight for ticket creation
+      - name: Validate browser preflight for customer ticket workflow
         run: |
           curl -fsS -i -X OPTIONS \
             -H 'Origin: http://localhost:3001' \
-            -H 'Access-Control-Request-Method: POST' \
-            -H 'Access-Control-Request-Headers: Content-Type' \
-            http://127.0.0.1:8080/api/tickets > /tmp/preflight.txt
+            -H 'Access-Control-Request-Method: PATCH' \
+            -H 'Access-Control-Request-Headers: Content-Type, X-Customer-ID' \
+            http://127.0.0.1:8080/api/tickets/1 > /tmp/preflight.txt
           cat /tmp/preflight.txt
           grep -qi '^Access-Control-Allow-Origin: http://localhost:3001' /tmp/preflight.txt
-          grep -qi '^Access-Control-Allow-Methods: GET, POST, OPTIONS' /tmp/preflight.txt
+          grep -qi '^Access-Control-Allow-Methods: GET, POST, PATCH, OPTIONS' /tmp/preflight.txt
+          grep -qi '^Access-Control-Allow-Headers: Authorization, Content-Type, X-Customer-ID' /tmp/preflight.txt
 
       - name: Validate end-to-end ticket journey
         run: |
+          CUSTOMER_ID="ci-customer"
           curl -fsS \
             -X POST \
             -H 'Content-Type: application/json' \
+            -H "X-Customer-ID: $CUSTOMER_ID" \
             -D /tmp/journey-headers.txt \
             -d '{"title":"CI end-to-end customer journey","severity":"SEV3"}' \
             http://127.0.0.1:8080/api/tickets \
@@ -114,15 +117,18 @@ jobs:
           echo "OPSFORGE_TICKET_ID=$TICKET_ID" >> "$GITHUB_ENV"
 
           for attempt in $(seq 1 30); do
-            curl -fsS "http://127.0.0.1:8080/api/tickets/$TICKET_ID" > /tmp/journey-state.json
+            curl -fsS \
+              -H "X-Customer-ID: $CUSTOMER_ID" \
+              "http://127.0.0.1:8080/api/tickets/$TICKET_ID" > /tmp/journey-state.json
             cat /tmp/journey-state.json
 
             if python -c '
           import json
           state = json.load(open("/tmp/journey-state.json"))
           processed = state.get("processing_status") == "processed"
+          customer = state.get("customer_id") == "ci-customer"
           event = any(item.get("event_type") == "ticket.processed" for item in state.get("events", []))
-          raise SystemExit(0 if processed and event else 1)
+          raise SystemExit(0 if processed and customer and event else 1)
           '; then
               break
             fi
@@ -134,6 +140,36 @@ jobs:
             fi
             sleep 1
           done
+
+          curl -fsS \
+            -X PATCH \
+            -H 'Content-Type: application/json' \
+            -H "X-Customer-ID: $CUSTOMER_ID" \
+            -d '{"status":"Resolved"}' \
+            "http://127.0.0.1:8080/api/tickets/$TICKET_ID" \
+            -o /tmp/journey-update.json
+
+          cat /tmp/journey-update.json
+          python -c '
+          import json
+          state = json.load(open("/tmp/journey-update.json"))
+          raise SystemExit(0 if state.get("status") == "Resolved" and state.get("customer_id") == "ci-customer" else 1)
+          '
+
+          curl -fsS \
+            -H "X-Customer-ID: $CUSTOMER_ID" \
+            "http://127.0.0.1:8080/api/tickets/$TICKET_ID" > /tmp/journey-final.json
+
+          python -c '
+          import json
+          state = json.load(open("/tmp/journey-final.json"))
+          event = any(
+              item.get("event_type") == "ticket.status_updated"
+              and item.get("details", {}).get("status") == "Resolved"
+              for item in state.get("events", [])
+          )
+          raise SystemExit(0 if state.get("status") == "Resolved" and event else 1)
+          '
 
           for attempt in $(seq 1 10); do
             if docker logs nightwatch-nginx 2>&1 | grep -F "$REQUEST_ID" >/dev/null && \
