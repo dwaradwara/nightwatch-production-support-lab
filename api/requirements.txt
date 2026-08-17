@@ -1,7 +1,8 @@
 Flask==3.1.1
-psycopg[binary]
-redis
-prometheus-flask-exporter
-opentelemetry-distro
-opentelemetry-exporter-otlp
-opentelemetry-instrumentation-flask
+psycopg[binary]==3.3.4
+redis==8.1.0
+prometheus-flask-exporter==0.23.2
+prometheus-client==0.26.0
+opentelemetry-distro==0.65b0
+opentelemetry-exporter-otlp==1.44.0
+opentelemetry-instrumentation-flask==0.65b0
