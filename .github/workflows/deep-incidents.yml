@@ -150,15 +150,23 @@ jobs:
       - name: Validate incident script syntax
         run: bash -n scripts/db_incident_003.sh
 
-      - name: Start isolated PostgreSQL long-transaction environment
+      - name: Start stable PostgreSQL long-transaction environment
         run: |
           docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml up -d db
-          for attempt in {1..30}; do
-            if docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml exec -T db \
-              pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1; then
-              exit 0
+          for attempt in {1..40}; do
+            ready=$(docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml exec -T db \
+              psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -X -Atc \
+              "SELECT count(*) FROM customer_activity WHERE id = 84;" 2>/dev/null || true)
+            if [[ "$ready" = "1" ]]; then
+              sleep 2
+              stable=$(docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml exec -T db \
+                psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -X -Atc \
+                "SELECT count(*) FROM customer_activity WHERE id = 84;" 2>/dev/null || true)
+              if [[ "$stable" = "1" ]]; then
+                exit 0
+              fi
             fi
-            sleep 2
+            sleep 1
           done
           docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml logs db
           exit 1
