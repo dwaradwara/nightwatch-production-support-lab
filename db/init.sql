@@ -24,6 +24,37 @@ CREATE TABLE IF NOT EXISTS ticket_events (
 CREATE INDEX IF NOT EXISTS idx_ticket_events_ticket_id
     ON ticket_events(ticket_id);
 
+-- Phase 6 database workload.
+-- This table models a high-volume customer activity feed used for query-plan,
+-- indexing, lock, transaction and connection-pool exercises. The seed is
+-- deterministic so incident evidence is reproducible across CI environments.
+CREATE TABLE IF NOT EXISTS customer_activity (
+    id BIGSERIAL PRIMARY KEY,
+    customer_id VARCHAR(32) NOT NULL,
+    event_type VARCHAR(40) NOT NULL,
+    payload TEXT NOT NULL,
+    occurred_at TIMESTAMPTZ NOT NULL
+);
+
+INSERT INTO customer_activity (customer_id, event_type, payload, occurred_at)
+SELECT
+    'customer-' || LPAD((((g - 1) % 5000) + 1)::text, 4, '0'),
+    CASE (g % 4)
+        WHEN 0 THEN 'ticket.created'
+        WHEN 1 THEN 'ticket.updated'
+        WHEN 2 THEN 'notification.sent'
+        ELSE 'ticket.viewed'
+    END,
+    REPEAT('activity-payload-', 8) || g::text,
+    TIMESTAMPTZ '2026-08-01 00:00:00+00' + (g * INTERVAL '15 seconds')
+FROM generate_series(1, 100000) AS g
+WHERE NOT EXISTS (SELECT 1 FROM customer_activity LIMIT 1);
+
+CREATE INDEX IF NOT EXISTS idx_customer_activity_customer_time
+    ON customer_activity (customer_id, occurred_at DESC);
+
+ANALYZE customer_activity;
+
 INSERT INTO tickets (title, severity, status, processing_status, customer_id)
 SELECT 'Customer API returning 502', 'SEV2', 'Resolved', 'seeded', 'opsforge-seed'
 WHERE NOT EXISTS (SELECT 1 FROM tickets);
