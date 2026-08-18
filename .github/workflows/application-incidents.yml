@@ -74,3 +74,63 @@ jobs:
       - name: Clean APP-001 environment
         if: always()
         run: bash scripts/down_environment.sh staging --volumes || true
+
+  app-002-dependency-timeout:
+    runs-on: ubuntu-latest
+    env:
+      APP002_EVIDENCE_DIR: ${{ github.workspace }}/.opsforge/evidence/app-002
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Validate APP-002 syntax
+        run: |
+          bash -n scripts/app_incident_002.sh
+          bash -n scripts/build_release.sh
+          python -m py_compile api/opsforge_app002_patch.py
+
+      - name: Prepare CI secrets and TLS
+        run: |
+          cp .env.example .env
+          openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout tls/nightwatch-fixed.key \
+            -out tls/nightwatch-fixed.crt \
+            -days 1 \
+            -subj "/CN=nightwatch.local" \
+            -addext "subjectAltName=DNS:nightwatch.local"
+
+      - name: Define APP-002 release
+        run: |
+          SHORT_SHA="${GITHUB_SHA::10}"
+          echo "APP002_RELEASE=app002-$SHORT_SHA" >> "$GITHUB_ENV"
+
+      - name: Build dependency-timeout exercise release
+        run: |
+          bash scripts/build_release.sh "$APP002_RELEASE" ticket-read-dependency-timeout
+          docker run --rm "nightwatch-api:$APP002_RELEASE" python -m py_compile /app/app.py /app/opsforge_app002_patch.py
+
+      - name: Exercise APP-002 diagnosis and dependency recovery
+        run: bash scripts/app_incident_002.sh "$APP002_RELEASE"
+
+      - name: Show APP-002 evidence summary
+        if: always()
+        run: |
+          find "$APP002_EVIDENCE_DIR" -maxdepth 1 -type f -print | sort || true
+          cat "$APP002_EVIDENCE_DIR/diagnosis.txt" 2>/dev/null || true
+          cat "$APP002_EVIDENCE_DIR/recovery.txt" 2>/dev/null || true
+
+      - name: Upload APP-002 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: opsforge-app002-evidence-${{ github.run_id }}
+          path: .opsforge/evidence/app-002
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Clean APP-002 environment
+        if: always()
+        run: |
+          docker rm -f opsforge-app002-dependency >/dev/null 2>&1 || true
+          bash scripts/down_environment.sh staging --volumes || true
