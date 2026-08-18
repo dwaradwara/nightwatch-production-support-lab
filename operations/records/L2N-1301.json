@@ -1,0 +1,53 @@
+{
+  "record_type": "l2_notes",
+  "id": "L2N-1301",
+  "created_at": "2026-08-18T10:54:00Z",
+  "owner": "L2-On-Shift",
+  "incident_id": "INC-1301",
+  "impact_assessment": "The synchronous ticket-create path is available, but background processing is stalled. Treat as P2 because durable customer work accumulates without completion even though simple readiness remains green.",
+  "hypotheses": [
+    {
+      "hypothesis": "RabbitMQ broker outage",
+      "status": "rejected",
+      "evidence": "API queue-health remains HTTP 200, rabbitmq-diagnostics ping succeeds, and the broker retains the published message as ready."
+    },
+    {
+      "hypothesis": "Ticket event publish failure",
+      "status": "rejected",
+      "evidence": "Ticket creation returns HTTP 201 and RabbitMQ messages_ready increases while processing_status remains queued."
+    },
+    {
+      "hypothesis": "PostgreSQL or Redis dependency outage",
+      "status": "rejected",
+      "evidence": "API readiness stays HTTP 200, PostgreSQL SELECT 1 succeeds, and Redis returns PONG."
+    },
+    {
+      "hypothesis": "Worker consumer missing",
+      "status": "confirmed",
+      "evidence": "RabbitMQ reports consumers=0 with a ready message, the worker container is stopped, and the target request ID is absent from worker logs before recovery."
+    }
+  ],
+  "actions": [
+    {
+      "action": "Capture queue ready, unacknowledged, and consumer counts before changing runtime state",
+      "reason": "Differentiate a missing consumer from broker failure, an in-flight slow job, or a publish failure."
+    },
+    {
+      "action": "Confirm API readiness, queue-health, PostgreSQL, Redis, and RabbitMQ broker health",
+      "reason": "Prove the incident is isolated to the asynchronous consumer layer rather than a broader dependency outage."
+    },
+    {
+      "action": "Correlate the incident request ID against API and worker logs",
+      "reason": "Show that the API accepted and queued the ticket but no worker processed that event before mitigation."
+    },
+    {
+      "action": "Start only the existing worker container under RUN-WORKER-RECOVERY",
+      "reason": "Use the lowest-blast-radius approved mitigation after evidence confirms a missing consumer."
+    },
+    {
+      "action": "Verify consumer restoration, backlog drain, ticket processed state, and correlated job completion",
+      "reason": "A started process is not recovery until the original queued customer work completes."
+    }
+  ],
+  "current_assessment": "QW-001 is resolved after the same worker container restores the consumer, processes the original durable message, and leaves API/database/broker health unchanged. Repeated unexplained worker exits require L3 investigation and should remain linked to the existing worker-reliability problem path rather than repeated blind restarts."
+}
