@@ -53,6 +53,58 @@ It computes min, median, p95, and max for each sample set. The exercise gate req
 
 The absolute threshold is only an exercise gate; the important operational method is comparison against the same service under the same fixed resource budget.
 
+## Measured proof
+
+The first complete validation cycle produced the following evidence on release `app004-24cdd186bf`:
+
+### Healthy baseline — 25 ticket-detail reads
+
+- minimum: `0.013715` seconds
+- median: `0.017087` seconds
+- p95: `0.024907` seconds
+- maximum: `0.025642` seconds
+
+### CPU-degraded window — 25 ticket-detail reads
+
+- minimum: `0.483196` seconds
+- median: `0.685175` seconds
+- p95: `0.992542` seconds
+- maximum: `1.087918` seconds
+- representative customer request: HTTP `200` in `0.671380` seconds
+- request ID: `2fd964902ac97341938241389a1d920a`
+- affected ticket ID: `5`
+
+The degraded p95 was approximately `39.85x` the healthy baseline p95 while the endpoint continued returning HTTP 200.
+
+### Resource and runtime identity
+
+- API CPU budget: `250000000` NanoCpus (`0.25` CPU)
+- controlled runaway processes: `12`
+- API image ID: `sha256:6853cc80311acf95b5332ce0ff37c166c0f418bf5f88ff102ddfcce03eb4724b`
+- API container ID: `4010a89b9810e3ecfb1bfe3c9bff6cb4902f4815ac6889ad153f6204026ac392`
+- main API PID: `4500`
+- release / image / container / main PID / CPU budget unchanged during degradation: confirmed
+- PostgreSQL / Redis / RabbitMQ / API health: healthy
+- `nr_throttled` increase during degraded window: `446`
+- `throttled_usec` increase during degraded window: `168122576`
+- Nginx / API / Loki / Tempo request correlation: confirmed
+
+### Recovered state — 25 ticket-detail reads
+
+- minimum: `0.013316` seconds
+- median: `0.013810` seconds
+- p95: `0.032273` seconds
+- maximum: `0.088917` seconds
+- recovery-window throttled-time increase: `60712` microseconds
+- original ticket after recovery: HTTP `200`
+- release / image / container / main PID / CPU budget unchanged: confirmed
+- API restart required: no
+- application redeploy required: no
+- resource-limit change required: no
+- full customer/release verification: passed
+
+The recovery p95 was about `96.75%` lower than the degraded p95. Recovery came from terminating only the identified runaway workload, not from restarting or replacing the API runtime.
+
 ## Resource proof
 
 The controller records:
@@ -85,9 +137,9 @@ This creates stronger evidence than a generic restart because the same runtime r
 
 ## Preventive follow-up
 
-APP-004 also creates a legitimate observability follow-up. Phase 4 intentionally deferred container CPU/memory telemetry until a concrete incident justified it. This incident provides that justification: L2 can diagnose the exercise with Docker/cgroup evidence, while L3/platform ownership should consider whether container CPU metrics, throttling alerts, and dashboard visibility should be added as a separate preventive change.
+APP-004 creates a legitimate observability follow-up. Phase 4 intentionally deferred container CPU/memory telemetry until a concrete incident justified it. This incident provides that justification: L2 can diagnose the exercise with Docker/cgroup evidence, while L3/platform ownership should consider container CPU metrics, CPU-throttling alerts, and dashboard visibility as a separate preventive change.
 
-That preventive work is not silently bundled into the incident fix; it remains an explicit follow-up so diagnosis, mitigation, and prevention stay distinct.
+That preventive work is not silently bundled into the incident fix; diagnosis, mitigation, and prevention remain separate operational steps.
 
 ## Operational records
 
@@ -104,4 +156,13 @@ That preventive work is not silently bundled into the incident fix; it remains a
 
 - `.github/workflows/application-incidents.yml`
 
-APP-004 remains under validation until Support Operations validation, APP-001 through APP-004 application-incident regression coverage, existing database deep incidents, and the full NIGHTWATCH OPSFORGE staging/production/rollback pipeline all pass on one exact branch head.
+## First validation cycle
+
+Implementation head `33c5bbf37b2d520d1c8215d4d1a61c61efbe6cd9` passed:
+
+- `OPSFORGE Support Operations` #36
+- `OPSFORGE Deep Incidents` #23, re-proving DB-001 through DB-004
+- `OPSFORGE Application Incidents` #8, re-proving APP-001 through APP-004
+- `NIGHTWATCH OPSFORGE CI` #92, including staging promotion, production promotion, controlled bad-release rejection, rollback, independent recovery verification, and cleanup
+
+APP-004 is complete in scope. The documentation-complete branch head must pass the same four gates again before merge.
