@@ -1,0 +1,41 @@
+{
+  "record_type": "runbook",
+  "id": "RUN-WORKER-POISON-JOB",
+  "created_at": "2026-08-18T12:17:00Z",
+  "owner": "L2-Operations",
+  "title": "Diagnose, quarantine, and safely replay poison queue work",
+  "trigger": "The same background job fails deterministically across retries while the RabbitMQ broker and worker consumer remain healthy.",
+  "preconditions": [
+    "capture the affected request ID, event/message ID, ticket or business object reference, queue state, and worker consumer count",
+    "confirm the failure is message-scoped rather than a broad dependency or worker outage",
+    "confirm retry behavior is bounded and a durable quarantine path exists",
+    "preserve the original payload and headers for investigation"
+  ],
+  "diagnostic_steps": [
+    "correlate repeated job_failed events for the same request/message ID",
+    "compare observed attempts with the configured retry ceiling",
+    "confirm one or more healthy messages still complete through the same consumer",
+    "verify API, PostgreSQL, Redis, RabbitMQ, and worker health",
+    "confirm the poison message is moved to quarantine exactly once after retry exhaustion",
+    "inspect quarantine payload and headers before deciding whether replay is safe",
+    "identify whether the defect is malformed data, unsupported event type, stale reference, or another permanent contract violation"
+  ],
+  "mitigation_steps": [
+    "do not restart a healthy worker to treat a message-specific failure",
+    "do not purge the main or quarantine queue",
+    "do not return an unchanged poison message to the main queue",
+    "keep the message quarantined when ownership or correction is uncertain",
+    "escalate producer/application contract defects to the owning team with payload and retry evidence",
+    "only after an approved correction, replay the corrected message once with preserved correlation metadata and reset retry state"
+  ],
+  "validation_steps": [
+    "healthy work continues to complete while the poison message is quarantined",
+    "the poison message no longer consumes retry capacity on the main queue",
+    "quarantine retains exactly the expected message before remediation",
+    "corrected replay produces exactly one successful completion for the affected request",
+    "the original affected ticket or business object reaches the expected completed state",
+    "main and quarantine queues return to expected steady state",
+    "worker/API runtime identities remain unchanged when restart or redeployment was not required"
+  ],
+  "escalation_boundary": "Escalate whenever the payload cannot be safely corrected within documented L2 authority, the producer contract is unclear, repeated poison messages indicate a systemic producer defect, quarantine growth threatens capacity, or replay requires code/schema/business-data changes."
+}
