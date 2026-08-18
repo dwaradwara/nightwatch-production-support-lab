@@ -75,7 +75,7 @@ start_idle_transaction() {
     {
       printf 'BEGIN;\n'
       printf 'UPDATE customer_activity SET payload = payload WHERE id = %s;\n' "$TARGET_ID"
-      sleep 45
+      sleep 12
       printf 'ROLLBACK;\n'
     } | compose exec -T -e PGAPPNAME="$LONGTX_APP" db psql \
           -U "$POSTGRES_USER" \
