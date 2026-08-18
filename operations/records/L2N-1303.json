@@ -1,0 +1,22 @@
+{
+  "record_type": "l2_notes",
+  "id": "L2N-1303",
+  "created_at": "2026-08-18T11:49:00Z",
+  "owner": "L2-On-Shift",
+  "incident_id": "INC-1303",
+  "impact_assessment": "The synchronous create path is healthy, but asynchronous completion latency increases as durable queue depth grows. Treat as P2 because customer work is accepted but completion delay is worsening even though simple health checks remain green.",
+  "hypotheses": [
+    {"hypothesis": "Worker consumer missing", "status": "rejected", "evidence": "RabbitMQ reports consumers=1 throughout and worker logs continue to show successful job_completed events."},
+    {"hypothesis": "Transient processing failure / retry loop", "status": "rejected", "evidence": "QW-003 request IDs show zero job_failed events while successful completions continue."},
+    {"hypothesis": "RabbitMQ or dependency outage", "status": "rejected", "evidence": "Queue-health, RabbitMQ ping, API readiness, PostgreSQL SELECT 1, and Redis PING remain healthy."},
+    {"hypothesis": "Arrival rate exceeds current worker processing throughput", "status": "confirmed", "evidence": "Queue depth increases across successive arrival batches while one healthy consumer continues making progress; the tail of the burst remains queued."}
+  ],
+  "actions": [
+    {"action": "Capture queue total, ready, unacknowledged, and consumer counts after each controlled arrival batch", "reason": "Prove backlog growth rather than a single stuck message."},
+    {"action": "Capture ticket processing-state counts and correlated worker outcomes", "reason": "Show some work completes successfully while later work remains queued."},
+    {"action": "Verify API, PostgreSQL, Redis, RabbitMQ, and worker health before mitigation", "reason": "Reject broad outages and avoid unnecessary restarts."},
+    {"action": "Disable only the confirmed temporary processing delay", "reason": "Remove the lowest-blast-radius throughput constraint while leaving the healthy worker and dependencies running."},
+    {"action": "Verify backlog drain, all original tickets processed, zero failures, one live consumer, and unchanged worker/API identities", "reason": "Recovery requires clearing accumulated customer work, not merely reducing queue depth temporarily."}
+  ],
+  "current_assessment": "QW-003 is resolved when the same worker drains the entire original backlog after the controlled throughput constraint is removed. If sustained real demand continues to exceed capacity, L2 should escalate for approved worker scaling or performance remediation rather than repeatedly restarting healthy components."
+}
