@@ -1,0 +1,36 @@
+{
+  "record_type": "l2_notes",
+  "id": "L2N-1002",
+  "created_at": "2026-08-18T06:27:00Z",
+  "owner": "L2-On-Shift",
+  "incident_id": "INC-1002",
+  "impact_assessment": "Ticket submission works, but asynchronous processing is delayed across customers; treat as P2 degradation rather than full outage.",
+  "hypotheses": [
+    {
+      "hypothesis": "API regression",
+      "status": "rejected",
+      "evidence": "API readiness and ticket creation remained healthy."
+    },
+    {
+      "hypothesis": "RabbitMQ broker unavailable",
+      "status": "rejected",
+      "evidence": "Broker metrics were available and queue accepted new messages."
+    },
+    {
+      "hypothesis": "Worker consumer unavailable",
+      "status": "confirmed",
+      "evidence": "Consumer count was zero, worker throughput was zero, and worker logs showed broker disconnect before exit."
+    }
+  ],
+  "actions": [
+    {
+      "action": "Restart worker service only",
+      "reason": "Evidence isolated failure to the consumer; approved runbook action with low blast radius."
+    },
+    {
+      "action": "Validate queue drain and synthetic journey",
+      "reason": "Process restart alone is not proof of service recovery."
+    }
+  ],
+  "current_assessment": "Service restored without code change. Recurrence should be tracked as a problem if the consumer exits again."
+}
