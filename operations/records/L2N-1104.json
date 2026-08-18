@@ -1,0 +1,44 @@
+{
+  "record_type": "l2_notes",
+  "id": "L2N-1104",
+  "created_at": "2026-08-18T07:49:00Z",
+  "owner": "L2-On-Shift",
+  "incident_id": "INC-1104",
+  "impact_assessment": "New application database connections fail while PostgreSQL remains running. Treat as P2 because connection acquisition is part of the critical request path and fresh requests can fail even when existing sessions and health probes still look normal.",
+  "hypotheses": [
+    {
+      "hypothesis": "PostgreSQL process outage",
+      "status": "rejected",
+      "evidence": "Reserved administrative access remains available and SELECT 1 succeeds during the incident."
+    },
+    {
+      "hypothesis": "Lock contention",
+      "status": "rejected",
+      "evidence": "The primary symptom is inability to establish a new application connection, not a connected session waiting on wait_event_type=Lock."
+    },
+    {
+      "hypothesis": "Ordinary application connection slots exhausted by the simulated pool",
+      "status": "confirmed",
+      "evidence": "The named opsforge-db004-pool sessions equal the calculated ordinary slot budget while a separate non-superuser probe receives PostgreSQL connection-slot exhaustion."
+    }
+  ],
+  "actions": [
+    {
+      "action": "Capture max_connections, reserved connection settings, and pg_stat_activity using the surviving administrative path",
+      "reason": "Prove capacity exhaustion before changing sessions; a green server process does not prove application connectivity."
+    },
+    {
+      "action": "Reproduce the failure with a separate non-superuser application connection",
+      "reason": "Distinguish application-slot exhaustion from network, authentication, or query-level failures."
+    },
+    {
+      "action": "Terminate one evidence-matched simulated pool backend after approval",
+      "reason": "Use the lowest-blast-radius mitigation that can restore one ordinary slot rather than restarting PostgreSQL or mass-killing sessions."
+    },
+    {
+      "action": "Immediately retry the ordinary application probe and verify PostgreSQL remains reachable",
+      "reason": "Recovery requires proof that customer-facing connection acquisition is restored, not merely that a backend was terminated."
+    }
+  ],
+  "current_assessment": "DB-004 is resolved only when a new ordinary application connection succeeds again and PostgreSQL remains healthy. Long-term corrective action in a commercial system would require identifying why the pool consumed capacity, validating pool limits/timeouts, and reviewing max_connections only with database/resource evidence."
+}
