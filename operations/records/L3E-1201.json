@@ -1,0 +1,31 @@
+{
+  "record_type": "l3_escalation",
+  "id": "L3E-1201",
+  "created_at": "2026-08-18T08:56:00Z",
+  "owner": "L2-On-Shift",
+  "incident_id": "INC-1201",
+  "business_impact": "Customers can create tickets but cannot read ticket details on the affected release; rollback restores service.",
+  "first_observed_at": "2026-08-18T08:50:00Z",
+  "affected_version": "app001-bad-<git-sha>",
+  "reproduction": "Deploy the APP-001 bad API release, create a valid customer ticket, then GET /api/tickets/<id> with the same X-Customer-ID; the read returns HTTP 500 while readiness and dependency health remain HTTP 200.",
+  "evidence": [
+    "failing request ID retained from the Nginx response",
+    "same request ID appears in Nginx and API logs",
+    "API log contains RuntimeError: OPSFORGE simulated application ticket-read regression",
+    "Tempo and Loki contain the failing request correlation",
+    "PostgreSQL row for the ticket exists during the failure",
+    "PostgreSQL, Redis, RabbitMQ, and readiness remain healthy",
+    "known-good release restores the same ticket read and full customer journey"
+  ],
+  "steps_already_performed": [
+    "confirmed customer scope and affected route",
+    "verified release identity",
+    "checked PostgreSQL, Redis, RabbitMQ and readiness",
+    "verified persisted ticket data",
+    "correlated public request through Nginx, API, Loki and Tempo",
+    "rolled back to known-good release",
+    "re-tested original symptom and complete customer journey"
+  ],
+  "suspected_component": "customer ticket-detail application handler in the affected API image",
+  "requested_action": "Development to inspect the release-specific ticket-read regression, add a regression test, and provide a corrected API release before re-promotion."
+}
