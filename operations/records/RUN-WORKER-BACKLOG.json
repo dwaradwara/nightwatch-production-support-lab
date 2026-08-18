@@ -1,0 +1,37 @@
+{
+  "record_type": "runbook",
+  "id": "RUN-WORKER-BACKLOG",
+  "created_at": "2026-08-18T11:49:00Z",
+  "owner": "L2-Operations",
+  "title": "Diagnose and recover RabbitMQ worker backlog",
+  "trigger": "Queue depth is increasing while the RabbitMQ broker is healthy and at least one worker consumer remains connected.",
+  "preconditions": [
+    "confirm the queue is durable and customer work is still being accepted",
+    "capture queue depth, ready/unacknowledged counts, consumer count, and worker runtime identity before mitigation",
+    "confirm whether worker processing is succeeding, failing, or absent",
+    "check for recent workload, configuration, dependency-latency, or release changes"
+  ],
+  "diagnostic_steps": [
+    "sample queue depth over time rather than relying on one snapshot",
+    "compare arrival volume with worker completion progress",
+    "confirm consumer count and worker health",
+    "inspect worker success/failure metrics and correlated logs",
+    "check API, PostgreSQL, Redis, and RabbitMQ health",
+    "distinguish sustained successful-but-slow processing from QW-001 consumer loss and QW-002 retry failure"
+  ],
+  "mitigation_steps": [
+    "remove only a confirmed temporary throughput constraint when that action is within L2 authority",
+    "do not restart a healthy worker merely because queue depth is high",
+    "do not purge durable customer work to make queue metrics look healthy",
+    "if sustained demand exceeds available capacity, escalate for approved worker scaling or performance remediation"
+  ],
+  "validation_steps": [
+    "queue depth trends down and reaches the expected steady state",
+    "all original affected customer work reaches completed processing state",
+    "consumer count remains healthy",
+    "worker success processing continues without new failure signal",
+    "API and dependency health remain normal",
+    "worker/API runtime identities remain unchanged when recovery did not require restart or redeployment"
+  ],
+  "escalation_boundary": "Escalate when backlog persists after the confirmed constraint is removed, sustained arrival rate exceeds supported capacity, worker success rate drops, failures appear, scaling or code/config changes are required, or customer work cannot be safely drained within the incident objective."
+}
