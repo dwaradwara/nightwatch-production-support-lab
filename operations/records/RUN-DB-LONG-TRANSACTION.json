@@ -1,0 +1,38 @@
+{
+  "record_type": "runbook",
+  "id": "RUN-DB-LONG-TRANSACTION",
+  "created_at": "2026-08-18T07:31:00Z",
+  "owner": "L2-Operations",
+  "title": "Diagnose and recover a stale PostgreSQL idle transaction",
+  "trigger": "A PostgreSQL transaction exceeds the approved age threshold or monitoring reports a session remaining idle in transaction beyond the service baseline.",
+  "preconditions": [
+    "confirm PostgreSQL is reachable",
+    "identify the exact application/session context rather than acting on age alone",
+    "capture pg_stat_activity including state, xact_start, query_start, wait event, and last query",
+    "capture relevant pg_locks evidence before terminating a backend",
+    "confirm whether customer sessions are currently blocked or whether this is proactive transaction-risk remediation",
+    "obtain the required simulated approval for backend termination"
+  ],
+  "diagnostic_steps": [
+    "query pg_stat_activity for sessions with state idle in transaction",
+    "compare transaction age against the operational threshold",
+    "identify application_name and backend PID",
+    "inspect last query and wait_event_type/wait_event",
+    "capture locks held by the target backend",
+    "check for lock-waiting sessions separately so lock contention is not assumed",
+    "check recent release/change context when available"
+  ],
+  "mitigation_steps": [
+    "terminate only the single approved backend that matches the captured application identity, idle-in-transaction state, and age threshold",
+    "do not restart PostgreSQL to clear one stale transaction",
+    "do not mass-terminate sessions solely because their age exceeds a threshold"
+  ],
+  "validation_steps": [
+    "the targeted application session is no longer present in pg_stat_activity",
+    "PostgreSQL remains reachable",
+    "an independent write to the affected data path succeeds within the expected lock timeout",
+    "no unexpected new lock waiter appears after recovery",
+    "retain evidence for incident/problem review"
+  ],
+  "escalation_boundary": "Escalate to DBA/application ownership when the session is business-critical, ownership cannot be confirmed, termination risk is unclear, the transaction repeatedly reappears, replication/maintenance impact is suspected, or application behavior must be changed to prevent recurrence."
+}

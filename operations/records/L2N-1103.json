@@ -1,0 +1,40 @@
+{
+  "record_type": "l2_notes",
+  "id": "L2N-1103",
+  "created_at": "2026-08-18T07:27:00Z",
+  "owner": "L2-On-Shift",
+  "incident_id": "INC-1103",
+  "impact_assessment": "No customer outage is required to act: the risk is a transaction left open beyond baseline. Treat as a P3 operational degradation/risk because the stale transaction can retain locks/resources and interfere with future work while health checks remain green.",
+  "hypotheses": [
+    {
+      "hypothesis": "Database outage",
+      "status": "rejected",
+      "evidence": "PostgreSQL remains reachable and independent SELECT/UPDATE operations succeed outside the stale session."
+    },
+    {
+      "hypothesis": "Lock-contention incident equivalent to DB-002",
+      "status": "rejected",
+      "evidence": "The target session is idle in transaction; global blocked-session count is captured separately and no waiter is required to identify the stale transaction."
+    },
+    {
+      "hypothesis": "Long-lived idle transaction",
+      "status": "confirmed",
+      "evidence": "pg_stat_activity shows application_name opsforge-db003-idle-transaction, state idle in transaction, non-null xact_start, and transaction age beyond the exercise threshold."
+    }
+  ],
+  "actions": [
+    {
+      "action": "Capture pg_stat_activity and pg_locks before changing the session",
+      "reason": "Age alone is insufficient evidence; state, application identity, transaction start, wait context, and held locks must be retained."
+    },
+    {
+      "action": "Terminate only the single evidence-matched simulated backend after approval",
+      "reason": "Avoid broad database restarts or age-based mass termination."
+    },
+    {
+      "action": "Verify session removal, database reachability, and a separate target-row write",
+      "reason": "Backend termination alone is not proof of recovery."
+    }
+  ],
+  "current_assessment": "DB-003 is resolved only after the stale named transaction disappears and independent database/write checks remain healthy. In a commercial environment, ownership and business context must be confirmed before terminating a long-running backend."
+}
