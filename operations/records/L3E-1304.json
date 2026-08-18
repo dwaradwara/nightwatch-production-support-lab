@@ -1,0 +1,30 @@
+{
+  "record_type": "l3_escalation",
+  "id": "L3E-1304",
+  "created_at": "2026-08-18T12:21:00Z",
+  "owner": "L2-On-Shift",
+  "incident_id": "INC-1304",
+  "business_impact": "One synthetic ticket cannot complete asynchronous processing because its event permanently violates the worker contract. Other valid work continues through the same consumer.",
+  "first_observed_at": "2026-08-18T12:14:00Z",
+  "affected_version": "QW-004 simulated producer-contract defect",
+  "reproduction": "Publish an event for a valid queued ticket using unsupported event_type=ticket.unsupported. The worker remains healthy, retries deterministically to its configured ceiling, then quarantines the event; unchanged replay would fail again.",
+  "evidence": [
+    "same request ID correlated across every failed delivery",
+    "worker consumer remains registered and healthy",
+    "configured bounded retry ceiling is reached",
+    "message quarantines exactly once with original correlation metadata",
+    "healthy tickets complete through the same worker during the incident",
+    "API, PostgreSQL, Redis, and RabbitMQ remain healthy",
+    "quarantined payload contains unsupported event_type while ticket reference is valid"
+  ],
+  "steps_already_performed": [
+    "rejected consumer loss and broad dependency outage",
+    "confirmed deterministic message-scoped failure",
+    "captured retry and quarantine evidence",
+    "verified healthy work continues",
+    "preserved the original quarantined payload and headers",
+    "did not restart the worker, purge queues, or blindly replay the message"
+  ],
+  "suspected_component": "upstream event producer / asynchronous event contract",
+  "requested_action": "Owning application team to confirm the supported event contract and approve payload correction or producer fix before replaying quarantined work outside the controlled exercise."
+}
