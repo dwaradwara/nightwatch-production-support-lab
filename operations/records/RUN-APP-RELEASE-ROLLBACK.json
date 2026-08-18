@@ -1,0 +1,40 @@
+{
+  "record_type": "runbook",
+  "id": "RUN-APP-RELEASE-ROLLBACK",
+  "created_at": "2026-08-18T08:52:00Z",
+  "owner": "L2-Operations",
+  "title": "Diagnose release-specific application 500 and roll back safely",
+  "trigger": "A customer-facing API route begins returning HTTP 5xx after a release while infrastructure/dependency health may remain green.",
+  "preconditions": [
+    "confirm the affected customer route and reproduce the failure through the public path",
+    "capture the failing release version and X-Request-ID",
+    "check readiness plus PostgreSQL, Redis, RabbitMQ, and proxy health before changing them",
+    "verify customer/business data exists when the symptom could be mistaken for data loss",
+    "correlate the failing request into the application layer using logs and traces",
+    "identify an approved known-good release before rollback"
+  ],
+  "diagnostic_steps": [
+    "compare /health/ready with the failing customer transaction",
+    "capture /version for release identity",
+    "verify the affected ticket row directly in PostgreSQL when applicable",
+    "search Nginx and API logs using the same edge-owned request ID",
+    "confirm centralized Loki evidence for the request",
+    "confirm Tempo trace evidence for the request",
+    "determine whether the 5xx originates in Nginx, application code, or a dependency before remediation"
+  ],
+  "mitigation_steps": [
+    "do not restart or reconfigure healthy PostgreSQL, Redis, RabbitMQ, or Nginx without evidence",
+    "do not hot-edit application code on the running container",
+    "when a release-specific application defect is proven and an approved known-good release exists, roll back the application release",
+    "retain the bad version, request ID, logs/traces, reproduction, and rollback evidence for development"
+  ],
+  "validation_steps": [
+    "confirm /version reports the known-good release",
+    "re-test the exact customer request that failed before rollback",
+    "confirm persisted data remains intact",
+    "run the complete customer/release verification after rollback",
+    "confirm readiness and dependency health remain healthy",
+    "attach an L3 escalation package for permanent code correction when the defect is application-owned"
+  ],
+  "escalation_boundary": "Escalate to development/L3 when the failing request is proven to reach application code and the defect requires a code change. Escalate to incident command/platform when rollback is unsafe, the known-good release is unavailable, multiple layers fail simultaneously, data integrity is uncertain, or the customer impact exceeds the normal L2 rollback authority."
+}
