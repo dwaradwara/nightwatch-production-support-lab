@@ -7,7 +7,7 @@ Phase 6 application incidents train L2 diagnosis when the platform is reachable 
 ## Application incident sequence
 
 1. APP-001 — release-specific API HTTP 500 regression — complete
-2. APP-002 — downstream dependency timeout — under validation
+2. APP-002 — downstream dependency timeout — complete
 3. APP-003 — malformed application configuration
 4. APP-004 — resource degradation
 
@@ -94,6 +94,22 @@ L2 must prove all of the following before assigning fault ownership:
 - Tempo and Loki contain the same request correlation
 
 The conclusion is slow-but-reachable downstream behavior, not a hard outage, proxy timeout, database failure, or generic application crash.
+
+### Measured proof
+
+The validated run produced:
+
+- ticket-detail response: HTTP `504` in `1.004487` seconds
+- failing request ID: `f53a1ddf27c93c9f52ce499cd226ef2e`
+- affected ticket ID: `6`
+- direct dependency response: HTTP `200` in `3.015` seconds
+- API dependency timeout budget: `1.0` second
+- PostgreSQL / Redis / RabbitMQ: healthy
+- Nginx / API / Loki / Tempo correlation: confirmed
+- recovered dependency latency: `0.063` seconds
+- original ticket after recovery: HTTP `200`
+- API redeploy required: no
+- full customer/release verification after recovery: passed
 
 ### Recovery boundary
 
