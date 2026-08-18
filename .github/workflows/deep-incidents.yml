@@ -1,0 +1,76 @@
+name: OPSFORGE Deep Incidents
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "db/**"
+      - "scripts/db_incident_*.sh"
+      - "operations/records/**"
+      - "docs/PHASE6-DATABASE.md"
+      - ".github/workflows/deep-incidents.yml"
+  workflow_dispatch:
+
+jobs:
+  db-001-missing-index:
+    runs-on: ubuntu-latest
+    env:
+      OPSFORGE_PROJECT_NAME: opsforge-db001
+      OPSFORGE_CONTAINER_PREFIX: nightwatch-db001
+      OPSFORGE_NETWORK_NAME: nightwatch-db001-net
+      POSTGRES_USER: nightwatch
+      POSTGRES_DB: nightwatch
+      POSTGRES_PASSWORD: opsforge-ci-db-password
+      RABBITMQ_USER: nightwatch
+      RABBITMQ_PASSWORD: opsforge-ci-rabbit-password
+      GRAFANA_ADMIN_USER: opsforge
+      GRAFANA_ADMIN_PASSWORD: opsforge-ci-grafana-password
+      DB001_EVIDENCE_DIR: ${{ github.workspace }}/.opsforge/evidence/db-001
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Validate incident script syntax
+        run: bash -n scripts/db_incident_001.sh
+
+      - name: Start isolated PostgreSQL incident environment
+        run: |
+          docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml up -d db
+          for attempt in {1..30}; do
+            if docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml exec -T db \
+              pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml logs db
+          exit 1
+
+      - name: Prove indexed baseline
+        run: bash scripts/db_incident_001.sh baseline
+
+      - name: Inject missing-index regression
+        run: bash scripts/db_incident_001.sh inject
+
+      - name: Diagnose sequential-scan regression
+        run: bash scripts/db_incident_001.sh diagnose
+
+      - name: Recover approved index
+        run: bash scripts/db_incident_001.sh recover
+
+      - name: Prove query-plan recovery
+        run: bash scripts/db_incident_001.sh verify
+
+      - name: Upload DB-001 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: opsforge-db001-evidence-${{ github.run_id }}
+          path: .opsforge/evidence/db-001
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Clean incident environment
+        if: always()
+        run: docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml down -v --remove-orphans
