@@ -7,11 +7,11 @@ The Queue / Worker domain trains L2 diagnosis of asynchronous customer-impact fa
 ## Domain sequence
 
 1. QW-001 — consumer missing — complete
-2. QW-002 — processing failure / retry — under validation
+2. QW-002 — processing failure / retry — complete
 3. QW-003 — queue backlog
 4. QW-004 — poison job
 
-**Queue / Worker domain status: IN PROGRESS.** QW-001 is complete; QW-002 is under validation; QW-003 and QW-004 remain.
+**Queue / Worker domain status: IN PROGRESS.** QW-001 and QW-002 are complete; QW-003 and QW-004 remain.
 
 Phase 7 later removes the root-cause labels and turns validated incidents into blind scenarios.
 
@@ -139,7 +139,28 @@ Operational records:
 
 ### Measured QW-002 proof
 
-Pending the first successful dedicated CI run. Measured values will be recorded only after runtime proof, followed by one final exact-head regression cycle.
+`OPSFORGE Queue Worker Incidents` run #4 proved:
+
+- healthy baseline: `messages=0`, `messages_ready=0`, `messages_unacknowledged=0`, `consumers=1`
+- incident ticket ID: `5`
+- incident request ID: `56e6af9b-ed42-475d-9da1-1f03f4ce909b`
+- ticket remained `processing_status=queued` while the transient processing fault was active
+- the required minimum of `3` correlated failures was observed before diagnosis completed
+- complete worker logs contained `13` correlated `job_failed` events for the same request
+- incident queue snapshot: `messages=1`, `messages_ready=0`, `messages_unacknowledged=1`, `consumers=1`
+- API readiness remained HTTP `200`
+- queue-health remained HTTP `200`
+- PostgreSQL `SELECT 1` returned `1`
+- Redis returned `PONG`
+- RabbitMQ diagnostic ping succeeded
+- after clearing only the transient condition, the same request produced exactly `1` `job_completed`
+- the original ticket became `processing_status=processed`
+- post-recovery queue: `messages=0`, `messages_ready=0`, `messages_unacknowledged=0`, `consumers=1`
+- worker and API container identities were unchanged
+- no worker restart or application redeployment was used
+- 36 evidence files were retained
+
+The durable lesson is that **a live consumer does not prove successful processing**. Request-level failure correlation, queue state, and worker metrics distinguish transient processing failure from missing-consumer and broker-outage scenarios.
 
 ## Definition of done for the Queue / Worker incidents
 
