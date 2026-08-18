@@ -142,4 +142,30 @@ Evidence is written to:
 
 ## Measured proof
 
-Measured CI values will be written here only after the first successful QW-004 runtime proof. The documentation-complete commit will then receive a fresh exact-head validation cycle before merge.
+`OPSFORGE Queue Worker Incidents` run #11 proved the QW-004 runtime path on the implementation head:
+
+- configured worker retry ceiling: `5`;
+- poison ticket ID: `5`;
+- poison request ID: `aa283c66-5262-4c43-b41c-bc72ade37655`;
+- poison event ID: `22aaf9ec-4f35-40ec-a1c3-9854eef9029f`;
+- deliberately invalid event type: `ticket.unsupported`;
+- correlated poison outcomes before remediation: `6` `job_failed`, `5` `job_retry_scheduled`, `1` `job_quarantined`, `0` `job_completed`;
+- the affected ticket remained `processing_status=queued` while quarantined;
+- main queue after isolation: `0` messages, `0` ready, `0` unacknowledged, `1` consumer;
+- quarantine after isolation: `1` message, `1` ready, `0` unacknowledged;
+- three healthy control tickets all reached `processed` through the same worker while the poison event was isolated;
+- API readiness and queue-health remained HTTP `200`;
+- PostgreSQL `SELECT 1` returned `1`;
+- Redis returned `PONG`;
+- RabbitMQ diagnostic ping succeeded;
+- controlled remediation verified the quarantined request and changed only `ticket.unsupported` to `ticket.created` before one confirmed replay;
+- after replay the original poison ticket reached `processed`;
+- final poison outcomes: `6` failures, `5` scheduled retries, `1` quarantine, exactly `1` completion;
+- final main queue: `0 / 0 / 0` with `1` consumer;
+- final quarantine queue: `0 / 0 / 0`;
+- worker container remained `5c0fdd7868cb1e02dd0a8e2c7ac1567511737d2ca6726fe1b87747c7ec8e11fe`;
+- API container remained `cd7380ddc7c60749b88b02619f907863355c2b2362ddd61d21373af4800653e4`;
+- no worker/API restart, RabbitMQ restart, queue purge, or application redeployment was used;
+- `51` evidence files were retained.
+
+The durable lesson is that **a deterministic message-specific failure must stop consuming live retry capacity**. Bounded retry, durable quarantine, preserved correlation evidence, healthy-work proof, ownership escalation, and controlled replay provide a safer L2 response than infinite requeue or broad service restarts.
