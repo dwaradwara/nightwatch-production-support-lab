@@ -1,0 +1,53 @@
+{
+  "record_type": "l2_notes",
+  "id": "L2N-1201",
+  "created_at": "2026-08-18T08:51:00Z",
+  "owner": "L2-On-Shift",
+  "incident_id": "INC-1201",
+  "impact_assessment": "Customer ticket-detail reads fail with HTTP 500 after a new release. Ticket creation still works, so impact is partial but blocks confirmation of processing and current ticket state.",
+  "hypotheses": [
+    {
+      "hypothesis": "PostgreSQL outage or missing ticket data",
+      "status": "rejected",
+      "evidence": "Database health is HTTP 200 and the affected ticket row exists directly in PostgreSQL during the failure."
+    },
+    {
+      "hypothesis": "Redis or RabbitMQ dependency outage",
+      "status": "rejected",
+      "evidence": "Cache and queue health endpoints remain HTTP 200 and readiness reports all dependencies healthy."
+    },
+    {
+      "hypothesis": "Nginx-generated 500 or routing failure",
+      "status": "rejected",
+      "evidence": "The same X-Request-ID reaches the API and the API logs the RuntimeError for the ticket-read handler."
+    },
+    {
+      "hypothesis": "Release-specific application regression in ticket detail read",
+      "status": "confirmed",
+      "evidence": "Failure appears only on the bad application release; correlated API logs contain the runtime exception, and rollback to the known-good release restores the same ticket read."
+    }
+  ],
+  "actions": [
+    {
+      "action": "Compare customer-path failure with readiness and dependency health",
+      "reason": "A green readiness endpoint does not prove every application route is usable."
+    },
+    {
+      "action": "Create a fresh ticket and verify its row directly in PostgreSQL",
+      "reason": "This separates an application read regression from data loss or failed persistence."
+    },
+    {
+      "action": "Correlate the failing read through Nginx/API logs, Loki, and Tempo using the edge-owned request ID",
+      "reason": "Layer-specific evidence is required before changing infrastructure or escalating application code."
+    },
+    {
+      "action": "Compare the failing release with the known-good release and roll back the simulated environment",
+      "reason": "Customer restoration is safer and faster than live code editing when a release-specific regression is proven."
+    },
+    {
+      "action": "Re-test the original ticket and then run the complete release/customer verification",
+      "reason": "Recovery requires proving both the reported symptom and the broader customer journey are restored."
+    }
+  ],
+  "current_assessment": "APP-001 is resolved operationally by rollback. Evidence isolates the defect to ticket-read application code in the bad release while dependencies and persisted data remain healthy. Permanent code correction belongs to development/L3; L2 should retain the request ID, bad version, reproduction, logs/traces, and rollback evidence."
+}

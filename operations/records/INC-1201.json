@@ -1,0 +1,57 @@
+{
+  "record_type": "incident",
+  "id": "INC-1201",
+  "created_at": "2026-08-18T08:50:00Z",
+  "owner": "L2-On-Shift",
+  "title": "Customer ticket detail reads return HTTP 500 after application release",
+  "severity": "P2",
+  "status": "Resolved",
+  "service": "nightwatch-ticket-api",
+  "source": "synthetic customer journey",
+  "detected_at": "2026-08-18T08:50:00Z",
+  "acknowledged_at": "2026-08-18T08:51:00Z",
+  "customer_impact": "Customers can create tickets but ticket-detail reads fail with HTTP 500, preventing them from confirming asynchronous processing and current ticket state.",
+  "scope": "Failure is isolated to the customer ticket-read path on the newly deployed application release. PostgreSQL, Redis, RabbitMQ, Nginx, API readiness, and the persisted ticket row remain healthy.",
+  "timeline": [
+    {
+      "at": "2026-08-18T08:50:00Z",
+      "event": "Synthetic/customer validation observed HTTP 500 on GET /api/tickets/<id> after a new release."
+    },
+    {
+      "at": "2026-08-18T08:51:00Z",
+      "event": "L2 acknowledged and confirmed /health/ready plus PostgreSQL, Redis, and RabbitMQ health remained green."
+    },
+    {
+      "at": "2026-08-18T08:52:00Z",
+      "event": "A new ticket was created successfully and the row was confirmed directly in PostgreSQL, ruling out missing business data."
+    },
+    {
+      "at": "2026-08-18T08:53:00Z",
+      "event": "The failing read was correlated by X-Request-ID across Nginx and API logs; the API emitted the simulated RuntimeError and Tempo/Loki contained the same request correlation."
+    },
+    {
+      "at": "2026-08-18T08:54:00Z",
+      "event": "Release comparison isolated the failure to the new API image rather than a shared dependency or proxy outage."
+    },
+    {
+      "at": "2026-08-18T08:55:00Z",
+      "event": "L2 rolled the simulated staging environment back to the known-good release and re-ran the customer journey."
+    },
+    {
+      "at": "2026-08-18T08:56:00Z",
+      "event": "Original ticket detail read returned HTTP 200 and full release verification passed; incident resolved and code defect escalated to development."
+    }
+  ],
+  "evidence": [
+    "bad release identity confirmed through /version",
+    "POST /api/tickets succeeds while GET /api/tickets/<id> returns HTTP 500",
+    "PostgreSQL, Redis, and RabbitMQ health endpoints remain HTTP 200",
+    "persisted ticket row exists in PostgreSQL during the read failure",
+    "same failing request ID appears in Nginx and API logs",
+    "API logs contain the application RuntimeError for the ticket-read handler",
+    "Tempo and Loki contain evidence for the failing request ID",
+    "known-good release restores the same ticket read to HTTP 200",
+    "complete customer/release verification passes after rollback"
+  ],
+  "resolution": "L2 isolated a release-specific API regression rather than changing healthy dependencies. The simulated environment was rolled back to the known-good release, the original ticket read and complete customer journey were re-verified, and the code-level defect was escalated to development for permanent correction."
+}
