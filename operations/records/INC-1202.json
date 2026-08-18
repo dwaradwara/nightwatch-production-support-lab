@@ -1,0 +1,36 @@
+{
+  "record_type": "incident",
+  "id": "INC-1202",
+  "created_at": "2026-08-18T09:10:00Z",
+  "owner": "L2-On-Shift",
+  "title": "Customer ticket detail reads time out while downstream service remains reachable",
+  "severity": "P2",
+  "status": "Resolved",
+  "service": "nightwatch-ticket-api",
+  "source": "synthetic customer journey",
+  "detected_at": "2026-08-18T09:10:00Z",
+  "acknowledged_at": "2026-08-18T09:11:00Z",
+  "customer_impact": "Ticket creation remains available, but ticket-detail reads return HTTP 504 because a downstream policy dependency exceeds the API timeout budget.",
+  "scope": "The API, Nginx, PostgreSQL, Redis, RabbitMQ, persisted ticket data, and readiness remain healthy. The downstream dependency is reachable and returns HTTP 200, but its response latency is approximately three seconds while the API timeout budget is one second.",
+  "timeline": [
+    {"at": "2026-08-18T09:10:00Z", "event": "Customer-path validation observed HTTP 504 on GET /api/tickets/<id>."},
+    {"at": "2026-08-18T09:11:00Z", "event": "L2 acknowledged and confirmed API readiness plus PostgreSQL, Redis, and RabbitMQ health remained green."},
+    {"at": "2026-08-18T09:12:00Z", "event": "Direct dependency probe returned HTTP 200 but required approximately three seconds, proving reachability with excessive latency rather than a hard outage."},
+    {"at": "2026-08-18T09:13:00Z", "event": "The failing customer request was correlated through Nginx/API logs, Loki, and Tempo; API logs recorded a dependency_timeout event at the one-second client budget."},
+    {"at": "2026-08-18T09:14:00Z", "event": "L2 isolated the downstream dependency as the latency source and avoided changes to healthy database, cache, queue, proxy, or API release."},
+    {"at": "2026-08-18T09:15:00Z", "event": "The simulated dependency recovered to normal latency and the same API release returned the original ticket detail with HTTP 200."},
+    {"at": "2026-08-18T09:16:00Z", "event": "Full release/customer verification passed; incident resolved and dependency latency evidence retained for escalation."}
+  ],
+  "evidence": [
+    "GET /api/tickets/<id> returns HTTP 504 while POST /api/tickets succeeds",
+    "PostgreSQL, Redis, RabbitMQ, Nginx, and /health/ready remain healthy",
+    "direct downstream probe returns HTTP 200 but takes approximately three seconds",
+    "application timeout budget is one second",
+    "same request ID appears in Nginx and API logs",
+    "API logs contain dependency_timeout for app002-policy-service",
+    "Tempo and Loki contain the failing request correlation",
+    "same application release returns HTTP 200 after dependency latency normalizes",
+    "complete customer/release verification passes after recovery"
+  ],
+  "resolution": "L2 proved a reachable-but-slow downstream dependency rather than an application crash or infrastructure outage. No API rollback or healthy-dependency changes were performed. After downstream latency normalized below the application timeout budget, the original ticket read and full customer journey were re-verified on the same release."
+}
