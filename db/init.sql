@@ -55,6 +55,19 @@ CREATE INDEX IF NOT EXISTS idx_customer_activity_customer_time
 
 ANALYZE customer_activity;
 
+-- DB-002 lock-contention fixture. The row is intentionally small and isolated
+-- from ticket processing so the exercise teaches transaction blocking rather
+-- than mixing lock diagnosis with the DB-001 query-plan workload.
+CREATE TABLE IF NOT EXISTS customer_account_state (
+    customer_id VARCHAR(32) PRIMARY KEY,
+    state VARCHAR(30) NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO customer_account_state (customer_id, state)
+VALUES ('customer-0042', 'Normal')
+ON CONFLICT (customer_id) DO NOTHING;
+
 INSERT INTO tickets (title, severity, status, processing_status, customer_id)
 SELECT 'Customer API returning 502', 'SEV2', 'Resolved', 'seeded', 'opsforge-seed'
 WHERE NOT EXISTS (SELECT 1 FROM tickets);
