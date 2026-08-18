@@ -1,0 +1,22 @@
+{
+  "record_type": "l2_notes",
+  "id": "L2N-1203",
+  "created_at": "2026-08-18T09:41:00Z",
+  "owner": "L2-On-Shift",
+  "incident_id": "INC-1203",
+  "impact_assessment": "Ticket creation remains available, but the customer ticket-detail path returns HTTP 500. The failure is partial and begins only after a runtime configuration change.",
+  "hypotheses": [
+    {"hypothesis": "PostgreSQL, Redis, RabbitMQ, or API readiness failure", "status": "rejected", "evidence": "Readiness and direct dependency health endpoints remain HTTP 200 during the customer failure."},
+    {"hypothesis": "Nginx-generated 500 or routing failure", "status": "rejected", "evidence": "The failing X-Request-ID reaches the API and the API emits the configuration_error response."},
+    {"hypothesis": "Application code or release-image regression", "status": "rejected", "evidence": "The exact same release and API image return HTTP 200 before the configuration injection and again after only the runtime value is corrected."},
+    {"hypothesis": "Malformed runtime value for APP003_TICKET_EVENT_LIMIT", "status": "confirmed", "evidence": "Container environment inspection shows APP003_TICKET_EVENT_LIMIT=not-a-number and API logs record configuration_error for that key; correcting it to 25 restores the path without changing the image."}
+  ],
+  "actions": [
+    {"action": "Compare the failing route with readiness, dependency health, release identity, and image ID", "reason": "A runtime configuration error can break one path while the service process and infrastructure remain healthy."},
+    {"action": "Inspect the effective API container environment for the affected setting", "reason": "The deployed runtime value must be proven rather than inferred from repository defaults."},
+    {"action": "Correlate the failing X-Request-ID through Nginx/API logs, Loki, and Tempo", "reason": "This proves the failure is generated in the application layer and preserves escalation evidence."},
+    {"action": "Do not roll back code or restart healthy database, cache, or queue components", "reason": "Release/image identity and dependency health reject those fault domains."},
+    {"action": "Correct only the malformed application setting, recreate the API on the same image, and re-run the exact customer request plus full verification", "reason": "This proves configuration-only recovery and guards against coincidental recovery."}
+  ],
+  "current_assessment": "APP-003 is resolved operationally after APP003_TICKET_EVENT_LIMIT was corrected to a supported integer. Evidence proves the release image did not change and core dependencies remained healthy. L2 should retain the effective environment, image IDs, failing request ID, structured configuration_error, trace/log correlation, and same-image recovery evidence for the application/configuration owner."
+}
