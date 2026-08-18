@@ -228,7 +228,7 @@ inject() {
   poison_request_id=$(python3 -c 'import uuid; print(uuid.uuid4())')
   poison_event_id=$(python3 -c 'import uuid; print(uuid.uuid4())')
 
-  poison_ticket_id=$(psql_cmd -Atc "
+  poison_ticket_id=$(psql_cmd -Atq -c "
     INSERT INTO tickets (
       title, severity, status, processing_status, customer_id, request_id
     )
@@ -242,6 +242,11 @@ inject() {
     )
     RETURNING id;
   ")
+
+  if [[ ! "$poison_ticket_id" =~ ^[0-9]+$ ]]; then
+    echo "QW-004 poison ticket ID is not numeric: $poison_ticket_id" >&2
+    return 1
+  fi
 
   printf '%s\n' "$poison_ticket_id" > "$EVIDENCE_DIR/poison-ticket-id.txt"
   printf '%s\n' "$poison_request_id" > "$EVIDENCE_DIR/poison-request-id.txt"
