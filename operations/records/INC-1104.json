@@ -1,0 +1,54 @@
+{
+  "record_type": "incident",
+  "id": "INC-1104",
+  "created_at": "2026-08-18T07:45:00Z",
+  "owner": "L2-On-Shift",
+  "title": "PostgreSQL ordinary application connection slots exhausted",
+  "severity": "P2",
+  "status": "Resolved",
+  "service": "postgresql-application-connectivity",
+  "source": "connection saturation exercise",
+  "detected_at": "2026-08-18T07:45:00Z",
+  "acknowledged_at": "2026-08-18T07:49:00Z",
+  "customer_impact": "New ordinary application database connections fail while existing sessions may remain connected. Requests that need a new PostgreSQL connection can fail even though PostgreSQL itself is still running.",
+  "scope": "The simulated non-superuser connection pool consumes all ordinary client slots under a reduced isolated max_connections value. PostgreSQL retains reserved administrative capacity so L2 can diagnose and recover the incident without restarting the database.",
+  "timeline": [
+    {
+      "at": "2026-08-18T07:45:00Z",
+      "event": "Application connection probe began failing while the PostgreSQL process remained reachable."
+    },
+    {
+      "at": "2026-08-18T07:49:00Z",
+      "event": "L2 acknowledged the P2 connectivity degradation and used the reserved administrative path to inspect connection settings and pg_stat_activity."
+    },
+    {
+      "at": "2026-08-18T07:51:00Z",
+      "event": "Evidence showed the named simulated pool consumed the entire ordinary application slot budget derived from max_connections and reserved-connection settings."
+    },
+    {
+      "at": "2026-08-18T07:52:00Z",
+      "event": "A separate ordinary application probe reproduced the PostgreSQL connection-slot exhaustion error."
+    },
+    {
+      "at": "2026-08-18T07:54:00Z",
+      "event": "Approved simulated mitigation terminated one evidence-matched pool backend rather than restarting PostgreSQL or killing unrelated sessions."
+    },
+    {
+      "at": "2026-08-18T07:55:00Z",
+      "event": "A new ordinary application connection succeeded, proving recovery after one slot was released."
+    }
+  ],
+  "evidence": [
+    "max_connections and reserved connection settings captured before remediation",
+    "ordinary application slot budget calculated from PostgreSQL settings",
+    "named opsforge-db004-pool sessions filled the ordinary connection budget",
+    "ordinary application connection reproduced a remaining-connection-slots or too-many-clients failure",
+    "reserved superuser administrative connection still returned SELECT 1 during saturation",
+    "pg_stat_activity session inventory captured before mitigation",
+    "only one evidence-matched simulated pool backend was terminated",
+    "new ordinary application connection returned SELECT 1 after one slot was released",
+    "PostgreSQL remained reachable throughout the mitigation",
+    "isolated max_connections override was restored after the exercise"
+  ],
+  "resolution": "L2 proved that ordinary PostgreSQL connection capacity, not database process health, was the limiting resource. One known simulated pool backend was terminated under the exercise approval boundary, immediately restoring new application connectivity without restarting PostgreSQL."
+}
