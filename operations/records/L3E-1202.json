@@ -1,0 +1,32 @@
+{
+  "record_type": "l3_escalation",
+  "id": "L3E-1202",
+  "created_at": "2026-08-18T09:16:00Z",
+  "owner": "L2-On-Shift",
+  "incident_id": "INC-1202",
+  "business_impact": "Customers can create tickets but ticket-detail reads return HTTP 504 while the downstream policy service exceeds the API timeout budget.",
+  "first_observed_at": "2026-08-18T09:10:00Z",
+  "affected_version": "app002-<git-sha>",
+  "reproduction": "Deploy the APP-002 exercise release, attach the controlled downstream service with approximately three-second response latency, create a valid customer ticket, then GET /api/tickets/<id>. The API returns HTTP 504 while readiness and core dependency health remain HTTP 200. A direct probe with a larger timeout returns HTTP 200 from the downstream service after approximately three seconds.",
+  "evidence": [
+    "failing request ID retained from the Nginx response",
+    "same request ID appears in Nginx and API logs",
+    "API log contains dependency_timeout for app002-policy-service",
+    "Tempo and Loki contain the failing request correlation",
+    "PostgreSQL, Redis, RabbitMQ, Nginx, and readiness remain healthy",
+    "direct downstream probe returns HTTP 200 but exceeds the one-second application timeout budget",
+    "same API release succeeds when dependency latency normalizes",
+    "full customer/release verification passes after dependency recovery"
+  ],
+  "steps_already_performed": [
+    "confirmed customer scope and affected route",
+    "verified API release identity",
+    "checked PostgreSQL, Redis, RabbitMQ, Nginx and readiness",
+    "measured downstream reachability and response latency directly",
+    "correlated public request through Nginx, API, Loki and Tempo",
+    "avoided changes to healthy infrastructure",
+    "re-tested original symptom and complete customer journey after dependency recovery"
+  ],
+  "suspected_component": "app002-policy-service downstream response latency",
+  "requested_action": "Dependency/service owner to investigate the latency excursion and provide preventive controls. Application owner should review whether the one-second timeout, retry policy, fallback behavior, and user-facing 504 handling remain appropriate, but no application code fault is claimed by this incident evidence."
+}
