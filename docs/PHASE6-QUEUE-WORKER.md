@@ -7,11 +7,11 @@ The Queue / Worker domain trains L2 diagnosis of asynchronous customer-impact fa
 ## Domain sequence
 
 1. QW-001 — consumer missing — complete
-2. QW-002 — processing failure / retry
+2. QW-002 — processing failure / retry — complete
 3. QW-003 — queue backlog
 4. QW-004 — poison job
 
-**Queue / Worker domain status: IN PROGRESS.** QW-001 is complete; QW-002 through QW-004 remain.
+**Queue / Worker domain status: IN PROGRESS.** QW-001 and QW-002 are complete; QW-003 and QW-004 remain.
 
 Phase 7 later removes the root-cause labels and turns validated incidents into blind scenarios.
 
@@ -88,14 +88,88 @@ Operational records:
 - `L2N-1301`
 - `RUN-WORKER-RECOVERY` (existing Phase 5 runbook)
 
-## Definition of done for QW-001
+## QW-002 — processing failure / retry
 
-QW-001 is complete only when one exact branch head passes:
+Customer-facing behavior:
 
-- Support Operations validation for the new incident records;
-- QW-001 controlled queue/worker workflow;
+```text
+Ticket create                -> HTTP 201
+Ticket processing            -> remains queued
+API readiness                -> healthy
+RabbitMQ broker              -> healthy
+RabbitMQ consumers           -> 1
+Worker                       -> running/healthy
+Same request ID              -> repeated job_failed
+Message                      -> nack/requeue loop while fault exists
+```
+
+### Diagnostic objective
+
+L2 must distinguish a processing failure from:
+
+- QW-001 consumer loss;
+- RabbitMQ outage;
+- event publish failure;
+- broad PostgreSQL or Redis outage;
+- a permanently malformed poison message.
+
+The controlled fault is a temporary ticket-scoped PostgreSQL trigger that rejects only the worker update from `queued` to `processed`. Worker source code is unchanged. The worker remains connected to RabbitMQ, repeatedly receives the same valid event, logs `job_failed`, and issues `basic_nack(..., requeue=True)`.
+
+Required proof includes at least three correlated failures for one request ID, one live consumer, the message remaining in ready/unacknowledged state, healthy API/dependency checks, and no `job_completed` while the transient fault remains active.
+
+### Mitigation objective
+
+QW-002 uses `RUN-WORKER-PROCESSING-FAILURE`. L2 clears only the confirmed transient processing condition and leaves the healthy worker consumer running. Recovery is complete only when the **same request ID** later produces exactly one `job_completed`, the original ticket becomes `processed`, and queue depth returns to zero without worker/API restart or redeployment.
+
+A permanently failing or malformed event must not be treated as a valid retry case; that belongs to QW-004 poison-message handling.
+
+Detailed operator note:
+
+- `docs/QW-002-PROCESSING-FAILURE-RETRY.md`
+
+Executable controller:
+
+- `scripts/qw_incident_002.sh`
+
+Operational records:
+
+- `INC-1302`
+- `L2N-1302`
+- `RUN-WORKER-PROCESSING-FAILURE`
+
+### Measured QW-002 proof
+
+`OPSFORGE Queue Worker Incidents` run #4 proved:
+
+- healthy baseline: `messages=0`, `messages_ready=0`, `messages_unacknowledged=0`, `consumers=1`
+- incident ticket ID: `5`
+- incident request ID: `56e6af9b-ed42-475d-9da1-1f03f4ce909b`
+- ticket remained `processing_status=queued` while the transient processing fault was active
+- the required minimum of `3` correlated failures was observed before diagnosis completed
+- complete worker logs contained `13` correlated `job_failed` events for the same request
+- incident queue snapshot: `messages=1`, `messages_ready=0`, `messages_unacknowledged=1`, `consumers=1`
+- API readiness remained HTTP `200`
+- queue-health remained HTTP `200`
+- PostgreSQL `SELECT 1` returned `1`
+- Redis returned `PONG`
+- RabbitMQ diagnostic ping succeeded
+- after clearing only the transient condition, the same request produced exactly `1` `job_completed`
+- the original ticket became `processing_status=processed`
+- post-recovery queue: `messages=0`, `messages_ready=0`, `messages_unacknowledged=0`, `consumers=1`
+- worker and API container identities were unchanged
+- no worker restart or application redeployment was used
+- 36 evidence files were retained
+
+The durable lesson is that **a live consumer does not prove successful processing**. Request-level failure correlation, queue state, and worker metrics distinguish transient processing failure from missing-consumer and broker-outage scenarios.
+
+## Definition of done for the Queue / Worker incidents
+
+Each QW incident is complete only when one exact branch head passes:
+
+- Support Operations validation for its operational records;
+- the Queue / Worker workflow with all completed QW incidents;
 - existing database deep-incident regressions;
 - existing application-incident regressions;
 - full NIGHTWATCH OPSFORGE staging -> production -> controlled bad-release rejection -> rollback -> independent recovery verification.
 
-The queue/worker domain remains in progress until QW-002 through QW-004 are completed.
+The queue/worker domain remains in progress until QW-001 through QW-004 are completed.
