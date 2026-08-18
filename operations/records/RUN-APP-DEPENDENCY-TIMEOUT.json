@@ -1,0 +1,40 @@
+{
+  "record_type": "runbook",
+  "id": "RUN-APP-DEPENDENCY-TIMEOUT",
+  "created_at": "2026-08-18T09:12:00Z",
+  "owner": "L2-Operations",
+  "title": "Diagnose customer-path dependency timeouts without changing healthy layers",
+  "trigger": "A customer-facing API request returns HTTP 504 or times out while general service readiness may remain healthy.",
+  "preconditions": [
+    "capture the affected route, customer scope, release version, HTTP status, duration, and X-Request-ID",
+    "confirm whether the request reaches the application layer",
+    "check readiness and core dependency health before changing any component",
+    "identify the downstream dependency and documented application timeout budget",
+    "use a direct dependency probe only when it is safe and does not mutate business data"
+  ],
+  "diagnostic_steps": [
+    "compare the failing customer transaction with /health/ready and direct health endpoints",
+    "correlate the X-Request-ID through Nginx and API logs",
+    "look for dependency_timeout or equivalent application evidence",
+    "probe the suspected downstream service directly using a client timeout larger than the application budget",
+    "record both reachability and measured dependency latency",
+    "confirm Loki and Tempo correlation for the customer request",
+    "distinguish slow-but-reachable service behavior from DNS failure, connection refusal, application exception, or proxy timeout"
+  ],
+  "mitigation_steps": [
+    "do not restart PostgreSQL, Redis, RabbitMQ, Nginx, or the API when evidence shows they are healthy",
+    "do not increase application timeouts during an incident without understanding customer and capacity impact",
+    "coordinate recovery with the downstream service owner when latency is the proven fault domain",
+    "use application fallback, traffic reduction, or rollback only when an approved design/runbook explicitly supports it",
+    "retain request IDs, latency measurements, logs, traces, and dependency-owner communication"
+  ],
+  "validation_steps": [
+    "re-probe the downstream service and confirm latency is below the application timeout budget",
+    "re-test the exact customer request that previously failed",
+    "confirm the same application release is still running when no rollback was required",
+    "run the complete customer/release verification",
+    "confirm readiness and core dependency health remain healthy",
+    "attach an escalation package when the dependency latency cause requires another team or a permanent resilience change"
+  ],
+  "escalation_boundary": "Escalate to the downstream service owner when direct evidence proves excessive dependency latency. Escalate to application development when timeout policy, retry/fallback behavior, or code changes are required. Escalate to incident command/platform when multiple services degrade simultaneously, capacity is uncertain, the timeout affects a broad customer population, or safe mitigation is not covered by an approved runbook."
+}
