@@ -8,7 +8,7 @@ Phase 6 application incidents train L2 diagnosis when the platform is reachable 
 
 1. APP-001 — release-specific API HTTP 500 regression — complete
 2. APP-002 — downstream dependency timeout — complete
-3. APP-003 — malformed application configuration — under validation
+3. APP-003 — malformed application configuration — complete
 4. APP-004 — resource degradation
 
 Phase 7 later removes the root-cause label and turns these into blind scenarios.
@@ -169,6 +169,30 @@ L2 must prove all of the following before mitigation:
 - Tempo and Loki contain the same failing request correlation
 
 The conclusion is malformed runtime application configuration, not a release-image regression, dependency outage, proxy-generated 500, or missing customer data.
+
+### Measured proof
+
+The first complete validation cycle produced:
+
+- ticket-detail response: HTTP `500` in `0.002383` seconds
+- failing request ID: `3193e2011b21efe5c31e4bf5b1f029ba`
+- affected ticket ID: `5`
+- exercise release: `app003-ab254e0f08`
+- API image ID: `sha256:5effe45c1be87cf477bd5829544bed9ea36ccf52c7b770f81e99d674048ee1a1`
+- API image unchanged after malformed runtime configuration: confirmed
+- malformed setting: `APP003_TICKET_EVENT_LIMIT=not-a-number`
+- expected setting contract: integer `1-200`
+- PostgreSQL / Redis / RabbitMQ: healthy
+- Nginx / API request correlation: confirmed
+- structured `configuration_error`: confirmed
+- Loki / Tempo correlation: confirmed
+- corrected setting: `APP003_TICKET_EVENT_LIMIT=25`
+- recovered API image ID: unchanged
+- application code rollback required: no
+- original ticket after recovery: HTTP `200`
+- full customer/release verification after recovery: passed
+
+The `app003-ab254e0f08` identifier is the release tag generated from the pull-request merge ref during the first validation cycle; the key proof is that the exact API image ID remained identical before fault injection, during failure, and after recovery.
 
 ### Recovery boundary
 
