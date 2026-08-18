@@ -1,0 +1,38 @@
+{
+  "record_type": "runbook",
+  "id": "RUN-DB-LOCK-CONTENTION",
+  "created_at": "2026-08-18T07:27:00Z",
+  "owner": "L2-Operations",
+  "title": "Diagnose and recover targeted PostgreSQL lock contention",
+  "trigger": "A customer write is blocked while PostgreSQL remains reachable and session evidence indicates a lock wait.",
+  "preconditions": [
+    "confirm customer/business impact and the blocked operation",
+    "confirm the database is reachable and the issue is not connection exhaustion or a database-wide outage",
+    "capture recent deployment/change/migration context",
+    "identify the waiting backend and confirm wait_event_type=Lock",
+    "use pg_blocking_pids() and pg_locks to prove the exact blocker relationship",
+    "identify transaction/application context for the blocker before any termination",
+    "obtain required simulated approval for targeted backend termination"
+  ],
+  "diagnostic_steps": [
+    "inspect pg_stat_activity for waiting and active transactions",
+    "capture waiter pid, application_name, state, wait_event_type and wait_event",
+    "resolve blocker pids with pg_blocking_pids(waiter_pid)",
+    "inspect pg_locks for holder/waiter lock modes and granted state",
+    "check transaction age and recent changes",
+    "do not classify a session as the blocker merely because it is old"
+  ],
+  "mitigation_steps": [
+    "if approval exists and evidence identifies one safe application blocker, terminate only that backend",
+    "do not restart PostgreSQL to clear a row-level lock",
+    "do not terminate unknown system, replication, migration, backup, or maintenance sessions without escalation"
+  ],
+  "validation_steps": [
+    "previously blocked customer transaction completes successfully",
+    "wait_event_type=Lock is no longer present for the exercise sessions",
+    "pg_blocking_pids() no longer reports the blocker chain",
+    "an independent follow-up write completes within the expected lock timeout",
+    "no unrelated database health regression appears after recovery"
+  ],
+  "escalation_boundary": "Escalate to DBA/development/change authority for unknown blocker ownership, schema migration or maintenance sessions, replication-sensitive work, multi-level blocking chains, repeated contention, deadlocks, inability to terminate safely, or contention that returns after the approved targeted action. OPSFORGE's pg_terminate_backend step represents a controlled simulated recovery and is not a claim of unrestricted L2 production privileges."
+}
