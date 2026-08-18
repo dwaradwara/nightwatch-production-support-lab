@@ -1,0 +1,24 @@
+{
+  "record_type": "l1_escalation",
+  "id": "L1E-1001",
+  "created_at": "2026-08-18T06:11:00Z",
+  "owner": "L2-On-Shift",
+  "incident_id": "INC-1001",
+  "symptom": "Customer says the ticket page is not working.",
+  "first_observed_at": "2026-08-18T06:05:00Z",
+  "affected_feature": "Ticket submission",
+  "checks_performed": [
+    "L1 confirmed the customer can sign in",
+    "L1 confirmed the ticket form loads"
+  ],
+  "missing_information": [
+    "affected customer or account identifiers",
+    "exact failure timestamp and timezone",
+    "HTTP status or browser error",
+    "request/correlation ID",
+    "whether one or multiple customers are affected",
+    "whether the issue reproduces consistently",
+    "whether the failure began after a known deployment or change"
+  ],
+  "disposition": "needs_clarification"
+}
