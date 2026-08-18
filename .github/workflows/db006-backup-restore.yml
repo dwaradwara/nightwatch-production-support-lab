@@ -1,0 +1,86 @@
+name: OPSFORGE DB-006 Backup Restore
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/db_incident_006.sh"
+      - "operations/records/INC-1106.json"
+      - "operations/records/L2N-1106.json"
+      - "operations/records/RUN-DB-BACKUP-RESTORE.json"
+      - "docs/DB-006-BACKUP-RESTORE.md"
+      - ".github/workflows/db006-backup-restore.yml"
+  workflow_dispatch:
+
+jobs:
+  db-006-backup-restore:
+    runs-on: ubuntu-latest
+    env:
+      OPSFORGE_PROJECT_NAME: opsforge-db006
+      OPSFORGE_CONTAINER_PREFIX: nightwatch-db006
+      OPSFORGE_NETWORK_NAME: nightwatch-db006-net
+      APP_ENV: db006
+      RELEASE_VERSION: db006-ci
+      API_HOST_PORT: "18006"
+      POSTGRES_USER: nightwatch
+      POSTGRES_DB: nightwatch
+      POSTGRES_PASSWORD: opsforge-ci-db-password
+      RABBITMQ_USER: nightwatch
+      RABBITMQ_PASSWORD: opsforge-ci-rabbit-password
+      GRAFANA_ADMIN_USER: opsforge
+      GRAFANA_ADMIN_PASSWORD: opsforge-ci-grafana-password
+      DB006_API_URL: http://127.0.0.1:18006
+      DB006_VALIDATION_DB: nightwatch_restore_validation
+      DB006_EVIDENCE_DIR: ${{ github.workspace }}/.opsforge/evidence/db-006
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Validate DB-006 shell syntax
+        run: bash -n scripts/db_incident_006.sh
+
+      - name: Build DB-006 API image
+        run: docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml build api
+
+      - name: Start stable DB-006 application environment
+        run: |
+          docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml up -d api
+          for attempt in {1..60}; do
+            activity=$(docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml exec -T db \
+              psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -X -Atc \
+              "SELECT count(*) FROM customer_activity;" 2>/dev/null || true)
+            ready=$(curl -sS -o /tmp/db006-ready.json -w '%{http_code}' \
+              "$DB006_API_URL/health/ready" 2>/dev/null || true)
+            tickets=$(curl -sS -o /tmp/db006-tickets.json -w '%{http_code}' \
+              "$DB006_API_URL/api/tickets" 2>/dev/null || true)
+            if [[ "$activity" = "100000" && "$ready" = "200" && "$tickets" = "200" ]]; then
+              sleep 2
+              stable=$(docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml exec -T db \
+                psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -X -Atc \
+                "SELECT count(*) FROM tickets;" 2>/dev/null || true)
+              if [[ "$stable" -ge 3 ]]; then
+                exit 0
+              fi
+            fi
+            sleep 1
+          done
+          docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml ps
+          docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml logs --no-color db api redis rabbitmq tempo
+          exit 1
+
+      - name: Exercise backup validation logical loss and restore
+        run: bash scripts/db_incident_006.sh exercise
+
+      - name: Upload DB-006 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: opsforge-db006-evidence-${{ github.run_id }}
+          path: .opsforge/evidence/db-006
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Clean DB-006 environment
+        if: always()
+        run: docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml down -v --remove-orphans

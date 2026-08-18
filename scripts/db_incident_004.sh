@@ -12,7 +12,7 @@ APP_PASSWORD="${DB004_APP_PASSWORD:-opsforge-db004-app-password}"
 POOL_PREFIX="opsforge-db004-pool"
 PROBE_APP="opsforge-db004-probe"
 TARGET_MAX_CONNECTIONS="${DB004_MAX_CONNECTIONS:-12}"
-POOL_HOLD_SECONDS="${DB004_POOL_HOLD_SECONDS:-20}"
+POOL_HOLD_SECONDS="${DB004_POOL_HOLD_SECONDS:-45}"
 POOL_PIDS=()
 CONFIG_CHANGED=0
 
@@ -174,6 +174,14 @@ start_pool_session() {
   POOL_PIDS+=("$!")
 }
 
+pool_session_count() {
+  admin_psql -X -Atc "
+    SELECT count(*)
+    FROM pg_stat_activity
+    WHERE application_name LIKE '${POOL_PREFIX}-%';
+  "
+}
+
 fill_ordinary_slots() {
   local budget
   budget=$(ordinary_slot_budget)
@@ -184,26 +192,40 @@ fill_ordinary_slots() {
     return 1
   fi
 
-  local i
-  for ((i=1; i<=budget; i++)); do
-    start_pool_session "$i"
-  done
+  local next_index=1
+  local count=0
+  : > "$EVIDENCE_DIR/pool-convergence.txt"
 
-  for _ in {1..40}; do
-    local count
-    count=$(admin_psql -X -Atc "
-      SELECT count(*)
-      FROM pg_stat_activity
-      WHERE application_name LIKE '${POOL_PREFIX}-%';
-    ")
+  # Fill from observed server state rather than firing exactly N clients at once.
+  # PostgreSQL may reject one of a burst of simultaneous admissions while slots
+  # are converging. A rejected synthetic client is not itself the incident; the
+  # required state is N named ordinary sessions visible in pg_stat_activity.
+  for attempt in {1..80}; do
+    count=$(pool_session_count)
+    printf 'attempt=%s pool_sessions=%s budget=%s\n' "$attempt" "$count" "$budget" \
+      >> "$EVIDENCE_DIR/pool-convergence.txt"
+
     if [[ "$count" = "$budget" ]]; then
       printf '%s\n' "$count" | tee "$EVIDENCE_DIR/pool-session-count.txt"
       return 0
     fi
+
+    if (( count < budget )); then
+      start_pool_session "$next_index"
+      next_index=$((next_index + 1))
+    fi
+
     sleep 0.25
   done
 
-  echo "DB-004 pool did not consume the expected ordinary connection slots" >&2
+  count=$(pool_session_count)
+  printf '%s\n' "$count" | tee "$EVIDENCE_DIR/pool-session-count.txt"
+  echo "DB-004 pool did not converge on expected ordinary connection budget $budget; observed $count" >&2
+  for log in "$EVIDENCE_DIR"/${POOL_PREFIX}-*.log; do
+    [[ -f "$log" ]] || continue
+    echo "--- $(basename "$log") ---" >&2
+    cat "$log" >&2 || true
+  done
   return 1
 }
 
@@ -222,11 +244,7 @@ capture_diagnostics() {
     ORDER BY sessions DESC, application_name;
   " | tee "$EVIDENCE_DIR/session-inventory.txt"
 
-  admin_psql -X -Atc "
-    SELECT count(*)
-    FROM pg_stat_activity
-    WHERE application_name LIKE '${POOL_PREFIX}-%';
-  " | tee "$EVIDENCE_DIR/diagnosed-pool-session-count.txt"
+  pool_session_count | tee "$EVIDENCE_DIR/diagnosed-pool-session-count.txt"
 
   admin_psql -X -Atc "SELECT 1;" \
     | tee "$EVIDENCE_DIR/reserved-admin-path.txt"
@@ -252,7 +270,7 @@ diagnose() {
 
   local budget pool_count admin_ok
   budget=$(ordinary_slot_budget)
-  pool_count=$(admin_psql -X -Atc "SELECT count(*) FROM pg_stat_activity WHERE application_name LIKE '${POOL_PREFIX}-%';")
+  pool_count=$(pool_session_count)
   admin_ok=$(cat "$EVIDENCE_DIR/reserved-admin-path.txt")
 
   if [[ "$pool_count" != "$budget" ]]; then
@@ -317,7 +335,7 @@ verify() {
 
   local budget remaining
   budget=$(ordinary_slot_budget)
-  remaining=$(admin_psql -X -Atc "SELECT count(*) FROM pg_stat_activity WHERE application_name LIKE '${POOL_PREFIX}-%';")
+  remaining=$(pool_session_count)
   printf '%s\n' "$remaining" | tee "$EVIDENCE_DIR/post-recovery-pool-session-count.txt"
 
   if (( remaining >= budget )); then
@@ -341,8 +359,7 @@ exercise() {
 
   terminate_pool_sessions
   wait_for_pool_children
-  admin_psql -X -Atc "SELECT count(*) FROM pg_stat_activity WHERE application_name LIKE '${POOL_PREFIX}-%';" \
-    | tee "$EVIDENCE_DIR/post-cleanup-pool-session-count.txt"
+  pool_session_count | tee "$EVIDENCE_DIR/post-cleanup-pool-session-count.txt"
   restore_configuration
   admin_psql -X -Atc "SHOW max_connections;" \
     | tee "$EVIDENCE_DIR/restored-max-connections.txt"
