@@ -1,0 +1,54 @@
+{
+  "record_type": "incident",
+  "id": "INC-1101",
+  "created_at": "2026-08-18T06:40:00Z",
+  "owner": "L2-On-Shift",
+  "title": "Customer activity lookup degraded after supporting index disappeared",
+  "severity": "P3",
+  "status": "Resolved",
+  "service": "postgresql-customer-activity",
+  "source": "performance investigation exercise",
+  "detected_at": "2026-08-18T06:40:00Z",
+  "acknowledged_at": "2026-08-18T06:48:00Z",
+  "customer_impact": "Customer activity-history lookups are slower than the established indexed baseline; core ticket creation and processing remain available.",
+  "scope": "Degradation is isolated to the customer_activity lookup path. PostgreSQL remains reachable and there is no evidence of a database-wide outage.",
+  "timeline": [
+    {
+      "at": "2026-08-18T06:40:00Z",
+      "event": "Performance regression reported for customer activity lookup while core service health remained green."
+    },
+    {
+      "at": "2026-08-18T06:48:00Z",
+      "event": "L2 acknowledged the P3 degradation and captured database state before changing anything."
+    },
+    {
+      "at": "2026-08-18T06:52:00Z",
+      "event": "pg_indexes showed idx_customer_activity_customer_time was absent; pg_stat_activity did not show lock or connection saturation evidence."
+    },
+    {
+      "at": "2026-08-18T06:55:00Z",
+      "event": "EXPLAIN (ANALYZE, BUFFERS) confirmed the customer lookup had regressed from the composite index to a sequential scan."
+    },
+    {
+      "at": "2026-08-18T07:02:00Z",
+      "event": "Approved simulated database change recreated the composite index concurrently and refreshed planner statistics."
+    },
+    {
+      "at": "2026-08-18T07:05:00Z",
+      "event": "Recovery verification confirmed the indexed plan returned and the query produced the expected 20-row result."
+    }
+  ],
+  "evidence": [
+    "PostgreSQL remained reachable during the degradation",
+    "customer_activity contained 100000 deterministic workload rows and occupied about 24 MB in the CI exercise",
+    "baseline EXPLAIN used Bitmap Index Scan on idx_customer_activity_customer_time and completed in 0.300 ms",
+    "idx_customer_activity_customer_time was absent during incident state",
+    "incident EXPLAIN used Seq Scan on customer_activity, removed 99980 rows by filter, touched 2774 shared buffers, and completed in 11.398 ms",
+    "measured incident execution time was about 38x the indexed baseline in this CI run",
+    "pg_stat_activity was captured before recovery to check session state/waits",
+    "composite index was restored through the approved simulated change",
+    "recovered EXPLAIN returned to Bitmap Index Scan on idx_customer_activity_customer_time and completed in 0.256 ms",
+    "customer lookup returned the expected 20-row result set after recovery"
+  ],
+  "resolution": "After L2 proved the missing-index query-plan regression and captured database evidence, the approved simulated recovery recreated idx_customer_activity_customer_time concurrently, analyzed the table, and verified the index-backed plan and result set."
+}

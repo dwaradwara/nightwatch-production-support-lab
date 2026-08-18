@@ -1,0 +1,40 @@
+{
+  "record_type": "l2_notes",
+  "id": "L2N-1101",
+  "created_at": "2026-08-18T06:49:00Z",
+  "owner": "L2-On-Shift",
+  "incident_id": "INC-1101",
+  "impact_assessment": "Customer activity-history lookups are degraded, but core ticket creation/processing and PostgreSQL connectivity remain available. Severity remains P3 because impact is limited to one non-critical query path.",
+  "hypotheses": [
+    {
+      "hypothesis": "Database-wide outage or connection failure",
+      "status": "rejected",
+      "evidence": "PostgreSQL health remained available and the exercise database accepted diagnostic queries."
+    },
+    {
+      "hypothesis": "Lock contention or blocked transaction",
+      "status": "rejected",
+      "evidence": "pg_stat_activity snapshot did not identify a blocking wait explaining the lookup regression."
+    },
+    {
+      "hypothesis": "Missing supporting index caused a sequential scan",
+      "status": "confirmed",
+      "evidence": "pg_indexes no longer contained idx_customer_activity_customer_time and EXPLAIN (ANALYZE, BUFFERS) showed Seq Scan on customer_activity."
+    }
+  ],
+  "actions": [
+    {
+      "action": "Capture index inventory, pg_stat_activity and EXPLAIN ANALYZE before remediation",
+      "reason": "Prove the suspected query-plan regression and preserve evidence before changing database state."
+    },
+    {
+      "action": "Execute approved simulated concurrent index recreation",
+      "reason": "The failure was isolated to the missing composite index; schema/index changes are treated as controlled changes rather than casual L2 edits."
+    },
+    {
+      "action": "ANALYZE customer_activity and repeat EXPLAIN plus result validation",
+      "reason": "Index creation alone is not proof that the planner uses it or that the customer query still returns correct data."
+    }
+  ],
+  "current_assessment": "Incident resolved after the index-backed query plan was restored. In a commercial environment the same evidence package would normally support a DBA/development/change-approval path according to access policy."
+}
