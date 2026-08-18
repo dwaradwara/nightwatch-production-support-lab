@@ -81,7 +81,7 @@ PY
 }
 
 kill_burners() {
-  docker exec "$API_CONTAINER" python - <<'PY'
+  docker exec -i "$API_CONTAINER" python - <<'PY'
 import os
 import signal
 
