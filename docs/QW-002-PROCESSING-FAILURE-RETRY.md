@@ -108,4 +108,26 @@ The existing `.github/workflows/queue-worker-incidents.yml` runs QW-001 and QW-0
 
 ## Measured proof
 
-Measured CI values will be recorded here only after the first complete QW-002 run succeeds. The documentation-complete commit will then receive a fresh exact-head validation cycle before merge.
+`OPSFORGE Queue Worker Incidents` run #4 proved the QW-002 controller on the implementation head:
+
+- healthy baseline: `messages=0`, `messages_ready=0`, `messages_unacknowledged=0`, `consumers=1`
+- incident ticket ID: `5`
+- incident request ID: `56e6af9b-ed42-475d-9da1-1f03f4ce909b`
+- the target ticket remained `processing_status=queued` while the transient fault was active
+- the controller first observed the required minimum of `3` correlated failures
+- complete worker logs showed `13` correlated `job_failed` events for the same request before recovery
+- incident queue snapshot: `messages=1`, `messages_ready=0`, `messages_unacknowledged=1`, `consumers=1`
+- API readiness remained HTTP `200`
+- queue-health remained HTTP `200`
+- PostgreSQL `SELECT 1` returned `1`
+- Redis returned `PONG`
+- RabbitMQ diagnostic ping succeeded
+- after disabling only the transient processing condition, the same request produced exactly `1` correlated `job_completed`
+- the original ticket became `processing_status=processed`
+- post-recovery queue: `messages=0`, `messages_ready=0`, `messages_unacknowledged=0`, `consumers=1`
+- worker container ID stayed `f4d78b9ea2f3f26bdc3e7e88cd13a419652277cd5668e8d6d23db14f6f2db951`
+- API container ID stayed `fd8e40091578ca137fb1824672e9e57a34cdab949d378e67d05a5dee5b70a567`
+- no worker restart or application redeployment was used
+- 36 evidence files were retained in the CI artifact
+
+The durable lesson is that **consumer presence is not proof of successful processing**. Request-level correlation plus queue state and worker failure metrics distinguish repeated processing failure from missing-consumer and broker-outage scenarios.
