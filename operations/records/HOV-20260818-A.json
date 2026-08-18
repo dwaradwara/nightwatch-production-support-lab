@@ -1,0 +1,26 @@
+{
+  "record_type": "handover",
+  "id": "HOV-20260818-A",
+  "created_at": "2026-08-18T09:00:00Z",
+  "owner": "L2-Day-Shift",
+  "shift_start": "2026-08-18T06:00:00Z",
+  "shift_end": "2026-08-18T14:00:00Z",
+  "service_health": "Core API and customer journey healthy. Worker processing restored. Recurring worker disconnect problem remains open under PRB-1001.",
+  "open_incidents": [
+    "INC-1001 awaiting improved L1/customer evidence",
+    "INC-1003 escalated to development; no safe L2 operational fix"
+  ],
+  "scheduled_changes": [
+    "CHG-1001 is Draft; do not implement without approval and staging validation"
+  ],
+  "risks": [
+    "worker consumer may exit again after RabbitMQ interruption until PRB-1001 permanent fix is completed",
+    "INC-1003 create-ticket regression remains dependent on L3/development action"
+  ],
+  "next_actions": [
+    "follow up L1 for the missing INC-1001 scope/evidence package",
+    "monitor development response for INC-1003",
+    "if worker consumer count reaches zero, use RUN-WORKER-RECOVERY and link any recurrence to PRB-1001",
+    "review CHG-1001 only after implementation and rollback plans are approved"
+  ]
+}

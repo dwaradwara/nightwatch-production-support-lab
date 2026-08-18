@@ -1,0 +1,30 @@
+{
+  "record_type": "l3_escalation",
+  "id": "L3E-1003",
+  "created_at": "2026-08-18T07:17:00Z",
+  "owner": "L2-On-Shift",
+  "incident_id": "INC-1003",
+  "business_impact": "Multiple customers cannot create tickets; read paths remain available.",
+  "first_observed_at": "2026-08-18T07:00:00Z",
+  "affected_version": "git-example-regression",
+  "reproduction": "POST /api/tickets with a valid X-Customer-ID returns HTTP 500; GET and readiness paths remain healthy.",
+  "evidence": [
+    "request_id=nw-demo-1003",
+    "HTTP 500 reproduced through public Nginx path",
+    "API log exception correlated to the same request ID",
+    "Tempo trace isolates the failure to create-ticket application code",
+    "PostgreSQL, Redis, RabbitMQ and worker health signals remain normal",
+    "first occurrence aligns with deployment of git-example-regression"
+  ],
+  "steps_already_performed": [
+    "confirmed customer scope and affected feature",
+    "reproduced failure through public path",
+    "checked release history",
+    "checked API/dependency metrics",
+    "correlated Nginx and API logs by request ID",
+    "reviewed Tempo trace",
+    "confirmed there is no approved configuration-only mitigation"
+  ],
+  "suspected_component": "ticket creation application code introduced in git-example-regression",
+  "requested_action": "Development to inspect the create-ticket regression and provide a code fix or confirm rollback recommendation."
+}

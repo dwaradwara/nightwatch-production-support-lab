@@ -1,0 +1,45 @@
+name: OPSFORGE Support Operations
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "operations/**"
+      - "scripts/validate_operations.py"
+      - "scripts/support_queue.py"
+      - ".github/workflows/support-operations.yml"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "operations/**"
+      - "scripts/validate_operations.py"
+      - "scripts/support_queue.py"
+      - ".github/workflows/support-operations.yml"
+  workflow_dispatch:
+
+jobs:
+  validate-support-operations:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Validate Python syntax
+        run: |
+          python -m py_compile scripts/validate_operations.py
+          python -m py_compile scripts/support_queue.py
+
+      - name: Validate operational records
+        run: python scripts/validate_operations.py operations/records
+
+      - name: Render active L2 queue
+        run: python scripts/support_queue.py
+
+      - name: Render complete incident history
+        run: python scripts/support_queue.py --all

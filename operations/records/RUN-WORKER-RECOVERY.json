@@ -1,0 +1,34 @@
+{
+  "record_type": "runbook",
+  "id": "RUN-WORKER-RECOVERY",
+  "created_at": "2026-08-18T08:25:00Z",
+  "owner": "L2-Operations",
+  "title": "Recover missing RabbitMQ worker consumer",
+  "trigger": "RabbitMQ queue depth is increasing, worker throughput is zero, and consumer count is zero while broker and API remain healthy.",
+  "preconditions": [
+    "confirm the incident is not a broker-wide outage",
+    "confirm synchronous API customer path remains available",
+    "capture worker and RabbitMQ evidence before changing runtime state",
+    "confirm no deployment or approved maintenance explains the consumer loss"
+  ],
+  "diagnostic_steps": [
+    "check synthetic customer processing outcome",
+    "check RabbitMQ queue ready/unacked message counts",
+    "check RabbitMQ consumer count for nightwatch-jobs",
+    "check worker processing rate and failure metrics",
+    "inspect worker logs around the first observed timestamp",
+    "check recent changes and releases"
+  ],
+  "mitigation_steps": [
+    "if evidence isolates the failure to a dead worker consumer and broker health is normal, restart the worker service only",
+    "do not restart PostgreSQL, Redis, RabbitMQ, API, or Nginx without separate evidence"
+  ],
+  "validation_steps": [
+    "consumer count returns to expected value",
+    "queue depth trends down",
+    "worker processing rate resumes",
+    "synthetic ticket processing succeeds",
+    "no new worker error signal appears during the observation window"
+  ],
+  "escalation_boundary": "Escalate to application/L3 if the worker repeatedly exits, cannot reconnect after one approved restart, reports a code exception, or requires source/configuration changes outside the approved L2 runbook. Link recurring incidents to PRB-1001."
+}

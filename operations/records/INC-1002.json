@@ -1,0 +1,50 @@
+{
+  "record_type": "incident",
+  "id": "INC-1002",
+  "created_at": "2026-08-18T06:20:00Z",
+  "owner": "L2-On-Shift",
+  "title": "Ticket processing delayed while API remains healthy",
+  "severity": "P2",
+  "status": "Resolved",
+  "service": "worker-rabbitmq",
+  "source": "synthetic alert",
+  "detected_at": "2026-08-18T06:20:00Z",
+  "acknowledged_at": "2026-08-18T06:26:00Z",
+  "customer_impact": "New tickets are accepted but background processing is delayed for multiple customers.",
+  "scope": "API create/read remains available; async processing queue is growing and one worker consumer is absent.",
+  "timeline": [
+    {
+      "at": "2026-08-18T06:20:00Z",
+      "event": "Synthetic journey reported ticket processing timeout."
+    },
+    {
+      "at": "2026-08-18T06:26:00Z",
+      "event": "L2 acknowledged incident and confirmed API readiness remained healthy."
+    },
+    {
+      "at": "2026-08-18T06:31:00Z",
+      "event": "RabbitMQ queue depth increased while consumer count dropped to zero."
+    },
+    {
+      "at": "2026-08-18T06:35:00Z",
+      "event": "Worker logs showed the consumer process had exited after a broker connection interruption."
+    },
+    {
+      "at": "2026-08-18T06:38:00Z",
+      "event": "L2 restarted only the worker service under the approved runbook."
+    },
+    {
+      "at": "2026-08-18T06:42:00Z",
+      "event": "Consumer count recovered, queue drained, and synthetic processing returned to success."
+    }
+  ],
+  "evidence": [
+    "API readiness healthy",
+    "RabbitMQ nightwatch-jobs ready messages increasing",
+    "RabbitMQ consumer count zero",
+    "worker processing rate zero",
+    "worker log showed broker connection interruption",
+    "synthetic journey recovered after worker-only restart"
+  ],
+  "resolution": "Restarted the failed worker consumer using the approved worker-recovery runbook; no code change was required."
+}

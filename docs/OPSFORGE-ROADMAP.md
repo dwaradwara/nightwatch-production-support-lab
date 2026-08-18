@@ -100,53 +100,71 @@ Operational design is documented in `docs/DELIVERY-PIPELINE.md`; validation evid
 
 ## Phase 4 — Production Observability
 
+Status: implemented and CI-validated on August 17, 2026; merged to `main` on August 18, 2026.
+
 Goal: support evidence-driven diagnosis.
 
-Metrics:
-- request count and rate
-- HTTP status/error rate
-- p50/p95/p99 latency
-- dependency latency/error metrics
-- PostgreSQL connections/query indicators
-- Redis availability
-- RabbitMQ queue depth
-- worker processing/error metrics
-- container/resource signals where practical
-
-Logs:
-- timestamp
-- severity
-- service
-- request/correlation ID
-- endpoint/job identifier
-- meaningful error context
-
-Traces:
-- incoming API request
-- meaningful dependency spans where available
+Delivered capabilities:
+- stable API RED metrics and dependency latency/availability signals
+- PostgreSQL telemetry through a pinned exporter
+- Redis telemetry through a pinned exporter
+- RabbitMQ per-object queue metrics for queue depth, consumers, and message state
+- worker processing/error/latency metrics
+- Prometheus recording rules for customer/API/database/queue/worker views
+- Prometheus detection rules for customer-path failure, API errors/latency, dependency failure, long DB transactions, Redis failure, queue backlog, and worker failures
+- provisioned `OPSFORGE L2 Operations` Grafana dashboard
+- centralized Loki view for API/worker/Nginx logs
+- Tempo request correlation using the same edge-owned request ID
+- reduced Alloy Docker discovery latency so newly deployed containers become searchable quickly
+- release-gate validation for telemetry targets, rules, Loki correlation, Tempo correlation, and Grafana provisioning
 
 Exit criteria:
 - operator can correlate customer symptom across metrics, logs, and traces
 
+Operational design is documented in `docs/OBSERVABILITY.md`.
+
 ## Phase 5 — Support Operations
+
+Status: implemented and CI-validated on August 18, 2026.
 
 Goal: model the L2 job rather than just the technology.
 
-Deliverables:
+Delivered capabilities:
+- machine-checkable operational records under `operations/records/`
+- support-record validator with severity/status/acknowledgement and record-specific requirements
+- severity-aware L2 incident queue view
+- dedicated `OPSFORGE Support Operations` GitHub Actions workflow
 - incident template
 - L1 escalation template
-- L2 investigation notes
+- L2 investigation notes template
 - change record template
 - problem record template
 - shift handover template
 - escalation-to-development template
 - runbook template
 
-Exercises include:
-- insufficient L1 report requiring scope clarification
-- issue correctly escalated to L3
-- issue mitigated by L2 without code change
-- recurring incidents promoted to a problem record
+Validated exercises:
+- `INC-1001` + `L1E-1001`: insufficient L1 report requiring specific scope/evidence clarification
+- `INC-1002` + `L2N-1002`: issue mitigated by L2 using a worker-only approved action without code change
+- `INC-1003` + `L3E-1003`: issue correctly escalated to development with version, reproduction, request ID, telemetry, troubleshooting, suspected component, and requested action
+- `INC-1002` + `INC-1004` -> `PRB-1001` -> `CHG-1001`: recurring incidents promoted to problem management and a controlled permanent-change path
+- `HOV-20260818-A`: shift continuity with open incidents, risk, pending change, and next actions
+- `RUN-WORKER-RECOVERY`: evidence-gated worker recovery with an explicit L2 escalation boundary
+
+Validation evidence:
+- support-specific CI validates 11 operational records and renders both active and historical incident queues
+- the complete existing OPSFORGE staging -> production -> rejected-candidate -> rollback -> independent recovery-verification pipeline also passes with Phase 5 present
+
+Exit criteria:
+- operational records fail CI when structurally incomplete or inconsistent
+- queue makes severity, ownership, status, and acknowledgement state visible
+- L2 can distinguish missing intake evidence from a diagnosable incident
+- a safe L2 mitigation is separated from code-level escalation
+- recurring incidents flow into problem/change management
+- shift handover and runbook boundaries preserve operational context between engineers
+- the full technical production-simulation contract remains green
+
+Operational design and exercise semantics are documented in `docs/SUPPORT-OPERATIONS.md`.
 
 ## Phase 6 — Deep Incident Domains
 
