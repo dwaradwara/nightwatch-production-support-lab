@@ -1,0 +1,41 @@
+{
+  "record_type": "runbook",
+  "id": "RUN-DB-MIGRATION-MISMATCH",
+  "created_at": "2026-08-18T07:54:00Z",
+  "owner": "L2-Operations",
+  "title": "Diagnose and recover an application/schema migration mismatch",
+  "trigger": "A customer path fails after a database change while PostgreSQL connectivity or service readiness remains healthy.",
+  "preconditions": [
+    "identify the exact database change and deployed application version",
+    "confirm the failing customer path independently of health/readiness probes",
+    "capture the current schema and application error before changing either layer",
+    "run the version-controlled schema contract when available",
+    "determine whether the migration transformed, deleted, or only renamed metadata",
+    "obtain the required simulated change/rollback approval"
+  ],
+  "diagnostic_steps": [
+    "compare /health/ready with the affected customer endpoint",
+    "verify PostgreSQL reachability with a minimal SELECT 1",
+    "run db/schema-contract.sql and retain the failure output",
+    "inspect information_schema for missing, renamed, or type-changed columns",
+    "inspect application logs for SQLSTATE/missing-column/type errors",
+    "compare pre-change and current row counts and data fingerprints when a rollback is being considered",
+    "review whether the currently deployed application can support the migrated schema or requires a roll-forward release"
+  ],
+  "mitigation_steps": [
+    "use rollback only when the reverse change is proven safe and approved",
+    "for this DB-005 exercise, rename job_state back to processing_status only after the ticket fingerprint matches baseline",
+    "do not restart PostgreSQL for a schema-contract mismatch",
+    "do not execute an automatic reverse migration after destructive or data-transforming DDL",
+    "prefer roll-forward or DBA/development escalation when rollback would risk data loss or semantic corruption"
+  ],
+  "validation_steps": [
+    "schema-contract.sql passes",
+    "the affected customer endpoint returns the expected success status",
+    "health/readiness remains healthy",
+    "expected schema names/types are restored or the new application/schema pair is proven compatible",
+    "row count and data fingerprint match the approved recovery expectation",
+    "retain migration, application-log, schema, and recovery evidence for incident/change review"
+  ],
+  "escalation_boundary": "Escalate to DBA/development/change ownership when the migration transformed or dropped data, rollback SQL is not proven reversible, multiple application versions depend on different schema contracts, replication/backup implications exist, the schema contract cannot identify a safe target state, or a roll-forward application change is required."
+}
