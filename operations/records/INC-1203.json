@@ -1,0 +1,36 @@
+{
+  "record_type": "incident",
+  "id": "INC-1203",
+  "created_at": "2026-08-18T09:40:00Z",
+  "owner": "L2-On-Shift",
+  "title": "Ticket detail reads fail after malformed runtime application configuration",
+  "severity": "P2",
+  "status": "Resolved",
+  "service": "nightwatch-ticket-api",
+  "source": "synthetic customer journey",
+  "detected_at": "2026-08-18T09:40:00Z",
+  "acknowledged_at": "2026-08-18T09:41:00Z",
+  "customer_impact": "Ticket creation remains available, but customer ticket-detail reads return HTTP 500 after an invalid runtime value is supplied for the application ticket-event limit.",
+  "scope": "API liveness/readiness, Nginx, PostgreSQL, Redis, RabbitMQ, persisted ticket data, release identity, and the API image remain healthy/unchanged. The failing path records a structured configuration_error for APP003_TICKET_EVENT_LIMIT=not-a-number.",
+  "timeline": [
+    {"at": "2026-08-18T09:40:00Z", "event": "Customer-path validation observed HTTP 500 on GET /api/tickets/<id> while ticket creation remained available."},
+    {"at": "2026-08-18T09:41:00Z", "event": "L2 acknowledged and confirmed readiness plus PostgreSQL, Redis, and RabbitMQ health remained green."},
+    {"at": "2026-08-18T09:42:00Z", "event": "L2 confirmed release identity and API image ID were unchanged from the healthy baseline."},
+    {"at": "2026-08-18T09:43:00Z", "event": "Container environment inspection found APP003_TICKET_EVENT_LIMIT=not-a-number; API logs recorded configuration_error for the same setting."},
+    {"at": "2026-08-18T09:44:00Z", "event": "The failing X-Request-ID was correlated through Nginx/API logs, Loki, and Tempo, isolating the failure to application runtime configuration."},
+    {"at": "2026-08-18T09:45:00Z", "event": "The setting was corrected to a supported integer and only the API runtime was recreated on the same release image; Nginx configuration was unchanged."},
+    {"at": "2026-08-18T09:46:00Z", "event": "The original ticket read returned HTTP 200 and full release/customer verification passed on the same release image."}
+  ],
+  "evidence": [
+    "healthy baseline GET /api/tickets/<id> returns HTTP 200 on the APP-003 exercise image",
+    "after runtime config injection, GET /api/tickets/<id> returns HTTP 500 while POST /api/tickets still succeeds",
+    "PostgreSQL, Redis, RabbitMQ, Nginx, and /health/ready remain healthy",
+    "release version remains unchanged",
+    "API image ID is identical before fault injection, during failure, and after recovery",
+    "container environment contains APP003_TICKET_EVENT_LIMIT=not-a-number during the incident",
+    "API log contains configuration_error naming APP003_TICKET_EVENT_LIMIT and the invalid value",
+    "same failing request ID appears in Nginx/API logs, Loki, and Tempo",
+    "correcting the setting to a supported integer restores the original ticket read and full customer journey without code rollback"
+  ],
+  "resolution": "L2 isolated the failure to malformed runtime application configuration rather than code, proxy, database, cache, queue, or release-image regression. The invalid setting was corrected to a supported integer, the API runtime was recreated using the same image, Nginx was reloaded only to refresh Docker service resolution, and the original customer path plus complete release verification passed."
+}

@@ -1,0 +1,42 @@
+{
+  "record_type": "runbook",
+  "id": "RUN-APP-MALFORMED-CONFIG",
+  "created_at": "2026-08-18T09:42:00Z",
+  "owner": "L2-Operations",
+  "title": "Diagnose malformed application runtime configuration without unnecessary rollback",
+  "trigger": "A customer-facing application path returns HTTP 500 or another application error after a configuration change while general service readiness and core dependencies may remain healthy.",
+  "preconditions": [
+    "capture the affected route, customer scope, release version, HTTP status, and X-Request-ID",
+    "confirm whether the failure began after a configuration or environment change",
+    "record the effective runtime configuration source without exposing secrets",
+    "compare release/image identity with the most recent healthy baseline",
+    "check readiness and core dependency health before changing components"
+  ],
+  "diagnostic_steps": [
+    "reproduce the customer failure and compare it with a known-good path on the same release when available",
+    "correlate the X-Request-ID through Nginx and API logs",
+    "look for configuration_error, parsing, validation, or unsupported-value evidence",
+    "inspect the effective runtime value for the suspected non-secret configuration key",
+    "compare API image ID and release identity to determine whether code changed",
+    "confirm PostgreSQL, Redis, RabbitMQ, proxy, and readiness health",
+    "confirm Loki and Tempo correlation for the failing request",
+    "distinguish malformed runtime configuration from code regression, dependency outage, missing data, and proxy failure"
+  ],
+  "mitigation_steps": [
+    "do not roll back application code when the same image is proven healthy with valid configuration",
+    "do not restart or modify healthy database, cache, queue, or proxy components",
+    "restore the affected configuration key to an approved supported value",
+    "recreate only the runtime component that must consume the corrected environment or configuration",
+    "reload an unchanged proxy only when required to refresh service discovery after container recreation",
+    "retain before/after image IDs, effective configuration evidence, request IDs, logs, traces, and change ownership"
+  ],
+  "validation_steps": [
+    "confirm the corrected runtime value is effective",
+    "confirm release and API image identity are unchanged",
+    "re-test the exact customer request that previously failed",
+    "confirm readiness and core dependency health remain healthy",
+    "run the complete customer/release verification",
+    "escalate for preventive configuration validation when unsupported values were able to reach the runtime"
+  ],
+  "escalation_boundary": "Escalate to the application/platform configuration owner when evidence proves an unsupported runtime value, schema mismatch, or deployment-control gap. Escalate to application development when code changes are required to validate configuration safely or improve failure behavior. Escalate to incident command/platform when the malformed setting affects multiple services, the correct value is uncertain, or recovery requires a broad coordinated change."
+}
