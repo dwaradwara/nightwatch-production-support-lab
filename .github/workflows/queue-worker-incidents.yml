@@ -135,3 +135,67 @@ jobs:
       - name: Clean QW-002 environment
         if: always()
         run: docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml down -v --remove-orphans
+
+  qw-003-queue-backlog:
+    runs-on: ubuntu-latest
+    env:
+      OPSFORGE_PROJECT_NAME: opsforge-qw003
+      OPSFORGE_CONTAINER_PREFIX: nightwatch-qw003
+      OPSFORGE_NETWORK_NAME: nightwatch-qw003-net
+      APP_ENV: qw003
+      RELEASE_VERSION: qw003-ci
+      API_HOST_PORT: "18103"
+      POSTGRES_USER: nightwatch
+      POSTGRES_DB: nightwatch
+      POSTGRES_PASSWORD: opsforge-ci-db-password
+      RABBITMQ_USER: nightwatch
+      RABBITMQ_PASSWORD: opsforge-ci-rabbit-password
+      GRAFANA_ADMIN_USER: opsforge
+      GRAFANA_ADMIN_PASSWORD: opsforge-ci-grafana-password
+      QW003_API_URL: http://127.0.0.1:18103
+      QW003_EVIDENCE_DIR: ${{ github.workspace }}/.opsforge/evidence/qw-003
+      QW003_BATCH_SIZE: "10"
+      QW003_BATCH_COUNT: "3"
+      QW003_PROCESSING_DELAY_SECONDS: "0.60"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Validate QW-003 shell syntax
+        run: bash -n scripts/qw_incident_003.sh
+
+      - name: Build QW-003 application images
+        run: docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml build api worker
+
+      - name: Start stable queue worker environment
+        run: docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml up -d api worker
+
+      - name: Exercise backlog diagnosis and no-restart recovery
+        run: bash scripts/qw_incident_003.sh exercise
+
+      - name: Show QW-003 evidence summary
+        if: always()
+        run: |
+          find "$QW003_EVIDENCE_DIR" -maxdepth 1 -type f -print | sort || true
+          cat "$QW003_EVIDENCE_DIR/incident-arrival-summary.txt" 2>/dev/null || true
+          cat "$QW003_EVIDENCE_DIR/incident-backlog-growth.txt" 2>/dev/null || true
+          cat "$QW003_EVIDENCE_DIR/incident-progress-queue-state.txt" 2>/dev/null || true
+          cat "$QW003_EVIDENCE_DIR/incident-worker-outcome-summary.txt" 2>/dev/null || true
+          cat "$QW003_EVIDENCE_DIR/recovery-drain-duration.txt" 2>/dev/null || true
+          cat "$QW003_EVIDENCE_DIR/post-recovery-queue-state.txt" 2>/dev/null || true
+          cat "$QW003_EVIDENCE_DIR/post-recovery-ticket-summary.txt" 2>/dev/null || true
+          cat "$QW003_EVIDENCE_DIR/post-recovery-worker-outcome-summary.txt" 2>/dev/null || true
+
+      - name: Upload QW-003 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: opsforge-qw003-evidence-${{ github.run_id }}
+          path: .opsforge/evidence/qw-003
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Clean QW-003 environment
+        if: always()
+        run: docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml down -v --remove-orphans
