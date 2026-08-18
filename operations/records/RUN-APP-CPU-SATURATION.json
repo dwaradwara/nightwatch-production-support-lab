@@ -1,0 +1,42 @@
+{
+  "record_type": "runbook",
+  "id": "RUN-APP-CPU-SATURATION",
+  "created_at": "2026-08-18T10:19:00Z",
+  "owner": "L2-Operations",
+  "title": "Diagnose API CPU saturation without blind restart",
+  "trigger": "Customer requests become materially slower while responses, readiness, and core dependencies may still remain healthy.",
+  "preconditions": [
+    "capture the affected route, customer scope, release version, HTTP status, request timing, and X-Request-ID",
+    "confirm whether the symptom is degradation or hard failure",
+    "record the current container/image identity, main process PID, and resource budget before mitigation",
+    "check readiness and core dependency health",
+    "preserve process and cgroup evidence before restarting or replacing the runtime"
+  ],
+  "diagnostic_steps": [
+    "measure repeated customer-path requests and compare p50/p95 or equivalent latency with a known healthy baseline",
+    "verify release, image, container, and main API process identity have not changed",
+    "inspect running processes for unexpected CPU consumers",
+    "capture cgroup cpu.stat and compare nr_throttled plus throttled_usec across the degraded window",
+    "confirm the configured CPU budget has not changed during the incident",
+    "check PostgreSQL, Redis, RabbitMQ, proxy, readiness, and container health",
+    "correlate a degraded-window X-Request-ID through Nginx/API logs, Loki, and Tempo",
+    "distinguish resource contention from dependency latency, code regression, malformed configuration, and proxy failure"
+  ],
+  "mitigation_steps": [
+    "do not restart or redeploy the API when the main runtime is healthy and the offending process can be isolated safely",
+    "do not raise timeouts or modify healthy dependencies to hide resource contention",
+    "terminate or suspend only the confirmed runaway workload when that action is within L2 authority",
+    "preserve the existing application release, image, container, main process, and resource budget when possible",
+    "capture the exact process identity and before/after resource evidence for escalation"
+  ],
+  "validation_steps": [
+    "confirm the offending process is no longer running",
+    "repeat the same latency sample and prove material recovery",
+    "confirm release, image, container, main API PID, and CPU budget remain unchanged",
+    "confirm readiness and core dependency health remain healthy",
+    "re-test the original ticket request",
+    "run the complete customer/release verification",
+    "escalate for preventive resource telemetry, limits, or application safeguards"
+  ],
+  "escalation_boundary": "Escalate to application/platform ownership when CPU consumption is caused by runaway application work, process leaks, unsafe background tasks, or missing resource telemetry. Escalate to infrastructure/platform when the configured resource budget itself is insufficient or unexpectedly constrained. Escalate to incident command when saturation affects multiple services or customer paths, no safe targeted mitigation exists, or broader capacity action is required."
+}
