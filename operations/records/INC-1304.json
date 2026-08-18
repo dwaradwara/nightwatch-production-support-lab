@@ -1,0 +1,40 @@
+{
+  "record_type": "incident",
+  "id": "INC-1304",
+  "created_at": "2026-08-18T12:14:00Z",
+  "owner": "L2-On-Shift",
+  "title": "Permanently invalid RabbitMQ job exhausts retries and requires quarantine",
+  "severity": "P2",
+  "status": "Resolved",
+  "service": "rabbitmq-worker-processing",
+  "source": "QW-004 controlled poison-job exercise",
+  "detected_at": "2026-08-18T12:14:00Z",
+  "acknowledged_at": "2026-08-18T12:17:00Z",
+  "customer_impact": "One synthetic ticket remains queued because its background event is permanently incompatible with the worker contract. Other valid tickets continue processing through the same consumer, so the impact is isolated but the affected work cannot complete through retry alone.",
+  "scope": "RabbitMQ, PostgreSQL, Redis, API readiness, and the worker consumer remain healthy. The fault is isolated to one deliberately invalid event whose unsupported event_type cannot succeed without correction.",
+  "timeline": [
+    {"at": "2026-08-18T12:14:00Z", "event": "A controlled upstream fault published one event with a valid ticket reference but unsupported event_type."},
+    {"at": "2026-08-18T12:17:00Z", "event": "L2 correlated repeated worker failures to the same request and confirmed the consumer and dependencies remained healthy."},
+    {"at": "2026-08-18T12:18:00Z", "event": "The worker exhausted its bounded retry budget and moved the event to the durable quarantine queue exactly once."},
+    {"at": "2026-08-18T12:19:00Z", "event": "Separate valid tickets completed successfully through the same worker, proving the poison event was isolated rather than a broad worker outage."},
+    {"at": "2026-08-18T12:21:00Z", "event": "L2 inspected the quarantined payload, identified the unsupported event type, and escalated the producer-contract defect for ownership confirmation."},
+    {"at": "2026-08-18T12:23:00Z", "event": "In the controlled exercise, the payload was corrected to the supported ticket.created contract and replayed once from quarantine."},
+    {"at": "2026-08-18T12:24:00Z", "event": "The original affected ticket reached processed state; main and quarantine queues returned to zero without worker/API restart or queue purge."}
+  ],
+  "evidence": [
+    "one live RabbitMQ consumer throughout the incident",
+    "same poison request ID produces repeated job_failed events with increasing retry count",
+    "bounded retry count is captured from worker configuration",
+    "poison event moves to durable quarantine exactly once after retry exhaustion",
+    "poison ticket remains queued before remediation",
+    "separate valid tickets reach processed state while poison work is quarantined",
+    "API readiness and queue-health remain HTTP 200",
+    "PostgreSQL SELECT 1, Redis PING, and RabbitMQ diagnostic ping remain successful",
+    "worker metrics expose retry and quarantine counters",
+    "quarantined payload preserves request ID, event ID, ticket ID, retry count, and failure reason metadata",
+    "corrected replay completes the original ticket exactly once",
+    "main and quarantine queues return to zero",
+    "worker and API container identities remain unchanged"
+  ],
+  "resolution": "L2 distinguished a permanently invalid event from transient QW-002 retry failure, allowed the worker to exhaust a bounded retry budget, isolated the event in durable quarantine, and preserved healthy queue throughput. After payload inspection and controlled correction, the quarantined event was replayed once and the original ticket completed without restarting healthy services or purging customer work."
+}

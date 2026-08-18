@@ -11,6 +11,7 @@ on:
       - "scripts/qw_incident_*.sh"
       - "operations/records/INC-13*.json"
       - "operations/records/L2N-13*.json"
+      - "operations/records/L3E-13*.json"
       - "operations/records/RUN-WORKER*.json"
       - "docs/PHASE6-QUEUE-WORKER.md"
       - "docs/QW-*.md"
@@ -105,8 +106,18 @@ jobs:
       - name: Build QW-002 application images
         run: docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml build api worker
 
+      - name: Prepare QW-002 transient retry override
+        run: |
+          mkdir -p .opsforge
+          cat > .opsforge/qw002-compose-override.yml <<'YAML'
+          services:
+            worker:
+              environment:
+                WORKER_MAX_RETRIES: "100"
+          YAML
+
       - name: Start stable queue worker environment
-        run: docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml up -d api worker
+        run: docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml -f .opsforge/qw002-compose-override.yml up -d api worker
 
       - name: Exercise processing failure diagnosis and retry recovery
         run: bash scripts/qw_incident_002.sh exercise
@@ -197,5 +208,70 @@ jobs:
           retention-days: 7
 
       - name: Clean QW-003 environment
+        if: always()
+        run: docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml down -v --remove-orphans
+
+  qw-004-poison-job:
+    runs-on: ubuntu-latest
+    env:
+      OPSFORGE_PROJECT_NAME: opsforge-qw004
+      OPSFORGE_CONTAINER_PREFIX: nightwatch-qw004
+      OPSFORGE_NETWORK_NAME: nightwatch-qw004-net
+      APP_ENV: qw004
+      RELEASE_VERSION: qw004-ci
+      API_HOST_PORT: "18104"
+      POSTGRES_USER: nightwatch
+      POSTGRES_DB: nightwatch
+      POSTGRES_PASSWORD: opsforge-ci-db-password
+      RABBITMQ_USER: nightwatch
+      RABBITMQ_PASSWORD: opsforge-ci-rabbit-password
+      GRAFANA_ADMIN_USER: opsforge
+      GRAFANA_ADMIN_PASSWORD: opsforge-ci-grafana-password
+      QW004_API_URL: http://127.0.0.1:18104
+      QW004_EVIDENCE_DIR: ${{ github.workspace }}/.opsforge/evidence/qw-004
+      QW004_HEALTHY_COUNT: "3"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Validate QW-004 syntax
+        run: |
+          bash -n scripts/qw_incident_004.sh
+          python -m py_compile worker/worker.py
+
+      - name: Build QW-004 application images
+        run: docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml build api worker
+
+      - name: Start stable queue worker environment
+        run: docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml up -d api worker
+
+      - name: Exercise poison-job quarantine and corrected replay
+        run: bash scripts/qw_incident_004.sh exercise
+
+      - name: Show QW-004 evidence summary
+        if: always()
+        run: |
+          find "$QW004_EVIDENCE_DIR" -maxdepth 1 -type f -print | sort || true
+          cat "$QW004_EVIDENCE_DIR/worker-max-retries.txt" 2>/dev/null || true
+          cat "$QW004_EVIDENCE_DIR/incident-poison-outcomes.txt" 2>/dev/null || true
+          cat "$QW004_EVIDENCE_DIR/incident-main-queue-state.txt" 2>/dev/null || true
+          cat "$QW004_EVIDENCE_DIR/incident-quarantine-state.txt" 2>/dev/null || true
+          cat "$QW004_EVIDENCE_DIR/incident-dependency-health.txt" 2>/dev/null || true
+          cat "$QW004_EVIDENCE_DIR/recovery-quarantine-replay.json" 2>/dev/null || true
+          cat "$QW004_EVIDENCE_DIR/post-recovery-poison-outcomes.txt" 2>/dev/null || true
+          cat "$QW004_EVIDENCE_DIR/post-recovery-main-queue-state.txt" 2>/dev/null || true
+          cat "$QW004_EVIDENCE_DIR/post-recovery-quarantine-state.txt" 2>/dev/null || true
+
+      - name: Upload QW-004 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: opsforge-qw004-evidence-${{ github.run_id }}
+          path: .opsforge/evidence/qw-004
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Clean QW-004 environment
         if: always()
         run: docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml down -v --remove-orphans

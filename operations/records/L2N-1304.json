@@ -1,0 +1,23 @@
+{
+  "record_type": "l2_notes",
+  "id": "L2N-1304",
+  "created_at": "2026-08-18T12:17:00Z",
+  "owner": "L2-On-Shift",
+  "incident_id": "INC-1304",
+  "impact_assessment": "One ticket cannot complete asynchronous processing because its event permanently violates the worker contract. Treat as P2 because affected work is stuck, but other valid jobs continue to complete and core dependencies remain healthy.",
+  "hypotheses": [
+    {"hypothesis": "Worker consumer missing", "status": "rejected", "evidence": "RabbitMQ reports consumers=1 and valid work continues to complete."},
+    {"hypothesis": "Transient processing failure that should recover through retry", "status": "rejected", "evidence": "The same request fails deterministically on every delivery with unsupported event_type and never reaches job_completed before quarantine."},
+    {"hypothesis": "Queue backlog caused by insufficient throughput", "status": "rejected", "evidence": "The main queue drains and healthy tickets complete; only the poison event is isolated in quarantine."},
+    {"hypothesis": "Permanently invalid event / producer-contract defect", "status": "confirmed", "evidence": "The quarantined payload contains a valid ticket reference but unsupported event_type, repeated failures reach the configured retry ceiling, and the worker quarantines the event exactly once."}
+  ],
+  "actions": [
+    {"action": "Correlate retry attempts by request ID and capture retry count, failure type, consumer count, and queue state", "reason": "Prove deterministic poison behavior rather than a missing consumer or transient dependency issue."},
+    {"action": "Verify healthy tickets continue through the same worker", "reason": "Confirm the fault is message-scoped and avoid restarting a healthy consumer."},
+    {"action": "Allow bounded retry policy to move the message to durable quarantine", "reason": "Stop infinite hot-loop retries while preserving the original payload for investigation."},
+    {"action": "Inspect quarantine metadata and payload before any replay", "reason": "Replay must be evidence-based; unchanged poison work must not be returned to the main queue."},
+    {"action": "Escalate producer-contract ownership before correction outside the controlled exercise", "reason": "L2 can isolate the message but must not invent application contract changes in real operations."},
+    {"action": "Replay only the corrected controlled payload once and verify original ticket completion", "reason": "Demonstrate safe recovery without queue purge, worker restart, or blind repeated replay."}
+  ],
+  "current_assessment": "QW-004 is resolved only after permanent poison behavior is bounded, the event is durably quarantined, healthy work remains unaffected, the payload is inspected, and an approved/corrected replay completes the original ticket. Unchanged poison messages must remain quarantined and be escalated rather than repeatedly retried."
+}
