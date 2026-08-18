@@ -1,0 +1,36 @@
+{
+  "record_type": "incident",
+  "id": "INC-1204",
+  "created_at": "2026-08-18T10:17:00Z",
+  "owner": "L2-On-Shift",
+  "title": "Ticket reads slow during API CPU saturation",
+  "severity": "P2",
+  "status": "Resolved",
+  "service": "nightwatch-ticket-api",
+  "source": "synthetic customer journey",
+  "detected_at": "2026-08-18T10:17:00Z",
+  "acknowledged_at": "2026-08-18T10:18:00Z",
+  "customer_impact": "Ticket creation and ticket-detail reads remain available, but customer ticket-detail latency increases materially while the API runtime is CPU saturated.",
+  "scope": "API container, release image, main API process, PostgreSQL, Redis, RabbitMQ, Nginx, and readiness remain available. The incident is isolated to CPU contention and cgroup throttling created by runaway processes inside the API runtime.",
+  "timeline": [
+    {"at": "2026-08-18T10:17:00Z", "event": "Customer-path sampling observed elevated ticket-detail latency while responses remained HTTP 200."},
+    {"at": "2026-08-18T10:18:00Z", "event": "L2 acknowledged and confirmed readiness plus PostgreSQL, Redis, and RabbitMQ health remained green."},
+    {"at": "2026-08-18T10:19:00Z", "event": "L2 confirmed release, API image ID, container ID, main process PID, and fixed CPU budget were unchanged from the healthy baseline."},
+    {"at": "2026-08-18T10:20:00Z", "event": "Container process inspection found multiple OPSFORGE CPU-burn processes; cgroup cpu.stat showed increased throttling during the degraded window."},
+    {"at": "2026-08-18T10:21:00Z", "event": "Baseline and degraded ticket-read samples proved a material p95 latency increase while customer responses continued to return HTTP 200."},
+    {"at": "2026-08-18T10:22:00Z", "event": "A degraded-window X-Request-ID was correlated through Nginx/API logs, Loki, and Tempo; L2 isolated the fault to API resource contention rather than a dependency or release failure."},
+    {"at": "2026-08-18T10:23:00Z", "event": "L2 terminated only the runaway CPU workload. The API container, image, main PID, release, and CPU budget stayed unchanged; ticket-read latency recovered and full release verification passed."}
+  ],
+  "evidence": [
+    "healthy baseline ticket-detail reads under the same fixed API CPU budget",
+    "degraded ticket-detail reads remain HTTP 200 but show materially higher p95 latency",
+    "PostgreSQL, Redis, RabbitMQ, Nginx, API readiness, and container health remain healthy",
+    "release version, API image ID, container ID, and main API PID remain unchanged",
+    "docker process inspection shows the controlled runaway CPU processes",
+    "cgroup cpu.stat shows increased nr_throttled and throttled_usec during degradation",
+    "same degraded-window request ID appears in Nginx/API logs, Loki, and Tempo",
+    "targeted termination of only the runaway workload reduces latency without API restart, redeploy, or resource-limit change",
+    "full customer/release verification passes after recovery"
+  ],
+  "resolution": "L2 isolated the customer latency increase to CPU contention inside the unchanged API runtime by comparing baseline/degraded latency, cgroup throttling, process inventory, release identity, container identity, and dependency health. Only the runaway CPU workload was terminated. The API was not restarted or redeployed, the fixed resource budget was not changed, ticket-read latency recovered, and full release verification passed."
+}
