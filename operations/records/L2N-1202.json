@@ -1,0 +1,22 @@
+{
+  "record_type": "l2_notes",
+  "id": "L2N-1202",
+  "created_at": "2026-08-18T09:11:00Z",
+  "owner": "L2-On-Shift",
+  "incident_id": "INC-1202",
+  "impact_assessment": "Ticket creation succeeds, but customer ticket-detail reads return HTTP 504. Impact is partial and isolated to the read path that depends on the downstream policy service.",
+  "hypotheses": [
+    {"hypothesis": "PostgreSQL, Redis, or RabbitMQ outage", "status": "rejected", "evidence": "Readiness and direct dependency health endpoints remain HTTP 200 during the customer timeout."},
+    {"hypothesis": "Nginx routing or proxy-generated timeout", "status": "rejected", "evidence": "The same X-Request-ID reaches the API and API logs record the dependency_timeout event before returning HTTP 504."},
+    {"hypothesis": "Downstream dependency is unreachable", "status": "rejected", "evidence": "A direct probe from the API container returns HTTP 200 from the dependency."},
+    {"hypothesis": "Reachable downstream dependency exceeds the API timeout budget", "status": "confirmed", "evidence": "Direct dependency latency is approximately three seconds while the application timeout is one second; the same API release succeeds after dependency latency drops below the timeout budget."}
+  ],
+  "actions": [
+    {"action": "Compare the customer 504 with readiness and core dependency health", "reason": "A timeout can be path-specific while general service health remains green."},
+    {"action": "Probe the downstream dependency directly with a larger client timeout and measure elapsed time", "reason": "This distinguishes slow-but-reachable behavior from DNS, connection refusal, or hard outage."},
+    {"action": "Correlate the failing request through Nginx/API logs, Loki, and Tempo", "reason": "Layer ownership must be proven before changing infrastructure."},
+    {"action": "Do not restart or reconfigure healthy PostgreSQL, Redis, RabbitMQ, Nginx, or the API", "reason": "Evidence points to downstream response latency, not those components."},
+    {"action": "After dependency recovery, re-test the exact ticket and run complete release/customer verification on the same API release", "reason": "This proves recovery was caused by dependency latency normalization rather than an application redeploy."}
+  ],
+  "current_assessment": "APP-002 is resolved operationally after the downstream service returned to normal response latency. Evidence proves the service remained reachable but exceeded the API timeout budget. L2 should retain the request ID, direct latency probe, timeout log, trace/log correlation, and same-release recovery evidence for the dependency owner."
+}
