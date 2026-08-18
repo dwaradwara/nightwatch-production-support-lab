@@ -74,3 +74,66 @@ jobs:
       - name: Clean incident environment
         if: always()
         run: docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml down -v --remove-orphans
+
+  db-002-lock-contention:
+    runs-on: ubuntu-latest
+    env:
+      OPSFORGE_PROJECT_NAME: opsforge-db002
+      OPSFORGE_CONTAINER_PREFIX: nightwatch-db002
+      OPSFORGE_NETWORK_NAME: nightwatch-db002-net
+      POSTGRES_USER: nightwatch
+      POSTGRES_DB: nightwatch
+      POSTGRES_PASSWORD: opsforge-ci-db-password
+      RABBITMQ_USER: nightwatch
+      RABBITMQ_PASSWORD: opsforge-ci-rabbit-password
+      GRAFANA_ADMIN_USER: opsforge
+      GRAFANA_ADMIN_PASSWORD: opsforge-ci-grafana-password
+      DB002_EVIDENCE_DIR: ${{ github.workspace }}/.opsforge/evidence/db-002
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Validate incident script syntax
+        run: bash -n scripts/db_incident_002.sh
+
+      - name: Start isolated PostgreSQL incident environment
+        run: |
+          docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml up -d db
+          for attempt in {1..30}; do
+            if docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml exec -T db \
+              pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml logs db
+          exit 1
+
+      - name: Prove clean lock baseline
+        run: bash scripts/db_incident_002.sh baseline
+
+      - name: Inject blocker and waiter transactions
+        run: bash scripts/db_incident_002.sh inject
+
+      - name: Diagnose blocker-waiter relationship
+        run: bash scripts/db_incident_002.sh diagnose
+
+      - name: Recover targeted simulated blocker
+        run: bash scripts/db_incident_002.sh recover
+
+      - name: Prove blocked update recovery
+        run: bash scripts/db_incident_002.sh verify
+
+      - name: Upload DB-002 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: opsforge-db002-evidence-${{ github.run_id }}
+          path: .opsforge/evidence/db-002
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Clean incident environment
+        if: always()
+        run: docker compose -p "$OPSFORGE_PROJECT_NAME" -f docker-compose.yml down -v --remove-orphans
