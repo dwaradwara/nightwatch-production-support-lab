@@ -6,10 +6,8 @@ Phase 6 deepens incident diagnosis inside the existing production-support simula
 
 ## Database incident sequence
 
-Planned domain order:
-
-1. DB-001 — slow query / missing supporting index
-2. DB-002 — lock contention
+1. DB-001 — slow query / missing supporting index — complete
+2. DB-002 — lock contention — under validation
 3. DB-003 — long-running transaction
 4. DB-004 — connection exhaustion
 5. DB-005 — failed or incompatible migration
@@ -44,19 +42,13 @@ The incident removes that supporting index. PostgreSQL remains reachable, so a s
 
 ### Evidence contract
 
-The exercise must produce three independent plan artifacts:
+The exercise produces three independent plan artifacts:
 
 - `baseline-plan.txt` — expected index-backed plan
 - `incident-plan.txt` — expected sequential-scan plan after injection
 - `recovered-plan.txt` — index-backed plan after approved recovery
 
-It also captures:
-
-- deterministic workload row count
-- index inventory before and after the incident
-- `pg_stat_activity` state during diagnosis
-- relation size
-- recovered query result count
+It also captures deterministic workload row count, index inventory, `pg_stat_activity`, relation size, and recovered query result count.
 
 The scenario controller is `scripts/db_incident_001.sh`.
 
@@ -74,7 +66,7 @@ In that CI run, the incident query took about **38×** the indexed baseline exec
 
 The incident relation occupied about 24 MB in the isolated CI environment.
 
-### Incident lifecycle
+### DB-001 lifecycle
 
 ```text
 indexed baseline
@@ -98,36 +90,54 @@ repeat EXPLAIN
 validate returned data
 ```
 
-### L2 decision boundary
+The intended skill is diagnosis and evidence quality, not unrestricted DDL. Recreating the index is modeled as an approved simulated change. Restarting PostgreSQL is explicitly not part of the runbook.
 
-The intended skill is diagnosis and evidence quality, not unrestricted DDL.
+Operational records:
 
-L2 should establish:
+- `INC-1101`
+- `L2N-1101`
+- `RUN-DB-MISSING-INDEX`
 
-- actual customer/query scope
-- database reachability
-- whether locks or broader saturation explain the symptom
-- whether the expected index exists
-- whether the planner actually regressed to a sequential scan
-- whether a recent change explains the missing object
+## DB-002 — lock contention
 
-Recreating the index is modeled as an approved simulated change. In a commercial environment, production DDL may require DBA/development/change authority depending on access policy, table size, replication topology, maintenance risk, and organizational controls.
+### Business symptom
 
-### Recovery is not index creation alone
+`customer_account_state` models a small transaction-sensitive customer state row. The incident does not make PostgreSQL unavailable. Instead, one open transaction holds the row lock while a second transaction tries to update the same customer and waits.
 
-DB-001 is not considered recovered until:
+That creates a different diagnostic pattern from DB-001:
 
-1. the index is visible again,
-2. planner statistics are refreshed,
-3. `EXPLAIN (ANALYZE, BUFFERS)` shows an index-backed plan,
-4. the customer query returns the expected 20 rows,
-5. incident evidence is retained for review.
+```text
+PostgreSQL reachable
+        ↓
+customer update does not complete
+        ↓
+wait_event_type = Lock
+        ↓
+identify waiter PID
+        ↓
+pg_blocking_pids(waiter_pid)
+        ↓
+identify exact blocker PID + transaction
+        ↓
+inspect pg_locks / transaction age / query
+        ↓
+approved targeted recovery
+        ↓
+waiting update completes
+```
 
-Restarting PostgreSQL is explicitly not part of this runbook.
+### Controlled sessions
 
-## Automated proof
+DB-002 creates two explicitly tagged PostgreSQL sessions:
 
-`.github/workflows/deep-incidents.yml` creates an isolated PostgreSQL environment and runs:
+- `opsforge-db002-blocker` — opens a transaction, updates `customer-0042`, and keeps the transaction open
+- `opsforge-db002-waiter` — attempts a second update to the same row and should enter a PostgreSQL `Lock` wait
+
+The `application_name` tags are part of the safety contract. The recovery action refuses to act unless the expected simulated blocker is present.
+
+### Evidence contract
+
+The scenario controller `scripts/db_incident_002.sh` separates five actions:
 
 ```text
 baseline
@@ -137,25 +147,71 @@ baseline
 → verify
 ```
 
-The workflow uploads the DB-001 evidence directory even when a scenario gate fails, and removes the isolated database volume after the run.
+Evidence includes:
+
+- database reachability while the transaction is blocked
+- `pg_stat_activity` for blocker and waiter
+- waiter `wait_event_type` / `wait_event`
+- `pg_blocking_pids` waiter-to-blocker mapping
+- `pg_locks` rows for both sessions
+- blocker PID, application name, transaction age, and query text captured before recovery
+- targeted termination result
+- post-recovery customer row state
+- proof that no DB-002 exercise sessions remain
+
+### L2 decision boundary
+
+The lesson is not “kill blocking PIDs.” L2 must first establish:
+
+1. the database is reachable,
+2. the affected operation is actually waiting on a lock,
+3. the exact waiter and blocker relationship,
+4. blocker transaction age and query context,
+5. whether the blocker belongs to an expected deployment, migration, maintenance operation, or business transaction,
+6. whether termination is authorized.
+
+In DB-002, `pg_terminate_backend` is permitted only because the target is the explicitly tagged simulated blocker and the exercise models an approved recovery. In a commercial environment, a production transaction may need DBA/application-owner approval because termination can roll back business work.
+
+Restarting PostgreSQL is intentionally not a recovery step for this scoped lock incident.
+
+### Recovery proof
+
+DB-002 is not considered recovered merely because the blocker disappeared. Verification must prove:
+
+- the waiter left the lock-wait state,
+- the waiting update completed,
+- the expected `Investigating` customer state was committed,
+- no exercise blocker/waiter sessions remain,
+- PostgreSQL stayed reachable without restart,
+- the fixture can be returned to `Normal` for the next exercise.
 
 Operational records:
 
-- `INC-1101` — incident lifecycle
-- `L2N-1101` — hypothesis and action record
-- `RUN-DB-MISSING-INDEX` — evidence-gated recovery procedure
+- `INC-1102`
+- `L2N-1102`
+- `RUN-DB-LOCK-CONTENTION`
 
-## Definition of done for DB-001
+## Automated proof
 
-DB-001 is complete when CI proves all of the following in one run:
+`.github/workflows/deep-incidents.yml` runs DB-001 and DB-002 as separate isolated jobs. Each job gets its own Compose project, PostgreSQL volume, evidence directory, and teardown.
 
-- baseline table contains the deterministic workload
-- baseline plan references `idx_customer_activity_customer_time`
-- incident injection removes that index
-- incident diagnosis proves a sequential scan
-- diagnostic database state is captured before remediation
-- approved recovery recreates the index and refreshes statistics
-- recovered plan references the supporting index again
-- query output remains correct
-- operational records pass the Phase 5 support-record validator
-- existing full OPSFORGE staging/production/rollback CI remains green
+The deep-incident workflow is only one gate. Phase 6 database changes must also keep:
+
+- Phase 5 support-record validation green
+- the complete OPSFORGE staging → production → rejected-candidate → rollback → recovery pipeline green
+
+## Definition of done for DB-002
+
+DB-002 is complete when CI proves all of the following in one run:
+
+- baseline target row is writable and no exercise sessions remain
+- blocker transaction acquires the target row lock
+- waiter transaction enters a PostgreSQL `Lock` wait
+- database remains reachable during the incident
+- `pg_blocking_pids` maps the waiter to the intended blocker
+- `pg_locks` evidence is captured before remediation
+- recovery targets only the proven simulated blocker
+- waiting update completes after lock release
+- no exercise sessions remain after recovery
+- operational records pass the support validator
+- existing full OPSFORGE delivery/rollback CI remains green
