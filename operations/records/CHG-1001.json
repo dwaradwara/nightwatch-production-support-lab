@@ -1,0 +1,34 @@
+{
+  "record_type": "change",
+  "id": "CHG-1001",
+  "created_at": "2026-08-18T08:30:00Z",
+  "owner": "Application-Team",
+  "title": "Improve worker RabbitMQ reconnect and heartbeat behavior",
+  "reason": "PRB-1001 links repeated worker consumer exits after broker connection interruptions.",
+  "affected_services": [
+    "worker",
+    "rabbitmq"
+  ],
+  "risk": "Medium: worker connection behavior changes can affect message consumption; synchronous API path is not directly modified.",
+  "implementation_plan": [
+    "implement bounded reconnect behavior and explicit heartbeat settings",
+    "build a versioned candidate image",
+    "deploy candidate to staging",
+    "exercise a broker interruption while processing synthetic tickets",
+    "promote only if consumer reconnects and processing recovers without manual restart"
+  ],
+  "validation_plan": [
+    "worker consumer count returns to one after controlled interruption",
+    "queue depth drains without manual worker restart",
+    "worker failure counter does not increase unexpectedly",
+    "synthetic customer journey returns to success",
+    "request and event correlation remains available"
+  ],
+  "rollback_plan": [
+    "redeploy the recorded last-good worker release",
+    "verify consumer registration",
+    "verify queue drain",
+    "run the production customer-path verification gate"
+  ],
+  "approval_status": "Draft"
+}
