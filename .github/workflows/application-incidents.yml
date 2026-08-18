@@ -192,3 +192,61 @@ jobs:
       - name: Clean APP-003 environment
         if: always()
         run: bash scripts/down_environment.sh staging --volumes || true
+
+  app-004-cpu-saturation:
+    runs-on: ubuntu-latest
+    env:
+      APP004_EVIDENCE_DIR: ${{ github.workspace }}/.opsforge/evidence/app-004
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Validate APP-004 syntax
+        run: |
+          bash -n scripts/app_incident_004.sh
+          bash -n scripts/build_release.sh
+
+      - name: Prepare CI secrets and TLS
+        run: |
+          cp .env.example .env
+          openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout tls/nightwatch-fixed.key \
+            -out tls/nightwatch-fixed.crt \
+            -days 1 \
+            -subj "/CN=nightwatch.local" \
+            -addext "subjectAltName=DNS:nightwatch.local"
+
+      - name: Define APP-004 release
+        run: |
+          SHORT_SHA="${GITHUB_SHA::10}"
+          echo "APP004_RELEASE=app004-$SHORT_SHA" >> "$GITHUB_ENV"
+
+      - name: Build normal resource exercise release
+        run: bash scripts/build_release.sh "$APP004_RELEASE"
+
+      - name: Exercise APP-004 CPU diagnosis and targeted recovery
+        run: bash scripts/app_incident_004.sh "$APP004_RELEASE"
+
+      - name: Show APP-004 evidence summary
+        if: always()
+        run: |
+          find "$APP004_EVIDENCE_DIR" -maxdepth 1 -type f -print | sort || true
+          cat "$APP004_EVIDENCE_DIR/baseline-latency-summary.txt" 2>/dev/null || true
+          cat "$APP004_EVIDENCE_DIR/degraded-latency-summary.txt" 2>/dev/null || true
+          cat "$APP004_EVIDENCE_DIR/diagnosis.txt" 2>/dev/null || true
+          cat "$APP004_EVIDENCE_DIR/recovered-latency-summary.txt" 2>/dev/null || true
+          cat "$APP004_EVIDENCE_DIR/recovery.txt" 2>/dev/null || true
+
+      - name: Upload APP-004 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: opsforge-app004-evidence-${{ github.run_id }}
+          path: .opsforge/evidence/app-004
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Clean APP-004 environment
+        if: always()
+        run: bash scripts/down_environment.sh staging --volumes || true
