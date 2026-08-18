@@ -60,6 +60,20 @@ It also captures:
 
 The scenario controller is `scripts/db_incident_001.sh`.
 
+### First measured CI result
+
+`OPSFORGE Deep Incidents` run #1 produced the following evidence on August 18, 2026:
+
+| State | Plan evidence | Execution time | Buffer / row evidence |
+|---|---|---:|---|
+| Baseline | `Bitmap Index Scan on idx_customer_activity_customer_time` | 0.300 ms | 20 result rows; 23 heap/index buffers plus 3 reads in the main scan path |
+| Incident | `Seq Scan on customer_activity` | 11.398 ms | 99,980 rows removed by filter; 2,774 shared buffers touched |
+| Recovered | `Bitmap Index Scan on idx_customer_activity_customer_time` | 0.256 ms | expected 20-row result restored |
+
+In that CI run, the incident query took about **38×** the indexed baseline execution time while PostgreSQL remained available. The exact timing is environment-specific; the durable evidence is the plan change, the rows filtered, and the much larger buffer footprint.
+
+The incident relation occupied about 24 MB in the isolated CI environment.
+
 ### Incident lifecycle
 
 ```text
