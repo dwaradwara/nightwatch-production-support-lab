@@ -1,0 +1,54 @@
+{
+  "record_type": "incident",
+  "id": "INC-1103",
+  "created_at": "2026-08-18T07:20:00Z",
+  "owner": "L2-On-Shift",
+  "title": "PostgreSQL session left idle in transaction beyond operational threshold",
+  "severity": "P3",
+  "status": "Resolved",
+  "service": "postgresql-customer-activity",
+  "source": "long-transaction alert exercise",
+  "detected_at": "2026-08-18T07:20:00Z",
+  "acknowledged_at": "2026-08-18T07:27:00Z",
+  "customer_impact": "No broad customer failure is present yet, but one application transaction remains open and retains database resources/locks longer than the operational baseline, creating elevated risk for future contention and maintenance interference.",
+  "scope": "One named simulated application session is idle in transaction. PostgreSQL remains reachable, no lock-waiting customer session is required for diagnosis, and unrelated application traffic remains available.",
+  "timeline": [
+    {
+      "at": "2026-08-18T07:20:00Z",
+      "event": "Long-transaction signal identified an application session exceeding the exercise age threshold."
+    },
+    {
+      "at": "2026-08-18T07:27:00Z",
+      "event": "L2 acknowledged the P3 operational-risk incident and captured pg_stat_activity before any session termination."
+    },
+    {
+      "at": "2026-08-18T07:29:00Z",
+      "event": "Evidence confirmed application_name opsforge-db003-idle-transaction in state idle in transaction with an open xact_start."
+    },
+    {
+      "at": "2026-08-18T07:30:00Z",
+      "event": "Lock inventory and global blocked-session count were captured to distinguish stale transaction state from active lock contention."
+    },
+    {
+      "at": "2026-08-18T07:32:00Z",
+      "event": "Approved simulated recovery targeted only the evidence-matched stale backend."
+    },
+    {
+      "at": "2026-08-18T07:33:00Z",
+      "event": "Verification confirmed the stale session was gone, PostgreSQL remained reachable, and the target row was independently writable."
+    }
+  ],
+  "evidence": [
+    "PostgreSQL remained reachable during diagnosis",
+    "application_name uniquely identified the simulated stale session",
+    "pg_stat_activity showed state idle in transaction",
+    "xact_start and transaction age were captured before remediation",
+    "last query and wait event were captured for context",
+    "pg_locks inventory was retained before recovery",
+    "global blocked-session count was captured to distinguish DB-003 from DB-002 lock contention",
+    "only the approved evidence-matched backend was terminated",
+    "post-recovery named-session count returned to zero",
+    "post-recovery write completed with UPDATE 1 and SELECT 1 confirmed database reachability"
+  ],
+  "resolution": "L2 verified one named stale idle-in-transaction session, captured transaction and lock evidence, and used the approved simulated targeted termination. Recovery was proven by disappearance of the stale session, successful independent write validation, and continued database reachability."
+}
