@@ -1,0 +1,57 @@
+{
+  "record_type": "incident",
+  "id": "INC-1301",
+  "created_at": "2026-08-18T10:50:00Z",
+  "owner": "L2-On-Shift",
+  "title": "RabbitMQ ticket events queued with no worker consumer",
+  "severity": "P2",
+  "status": "Resolved",
+  "service": "rabbitmq-worker-processing",
+  "source": "QW-001 controlled consumer-loss exercise",
+  "detected_at": "2026-08-18T10:50:00Z",
+  "acknowledged_at": "2026-08-18T10:54:00Z",
+  "customer_impact": "Ticket creation remains available, but newly created tickets stay in queued processing state because no worker is consuming durable RabbitMQ events. The synchronous API is usable while the asynchronous customer journey is degraded.",
+  "scope": "RabbitMQ, PostgreSQL, Redis, and the API remain healthy. The nightwatch-jobs queue has ready messages and zero consumers after the worker is stopped in the isolated QW-001 environment.",
+  "timeline": [
+    {
+      "at": "2026-08-18T10:50:00Z",
+      "event": "A controlled worker stop removed the RabbitMQ consumer while broker and API dependencies remained healthy."
+    },
+    {
+      "at": "2026-08-18T10:54:00Z",
+      "event": "L2 acknowledged the P2 asynchronous processing degradation and captured queue, dependency, runtime, and ticket-state evidence."
+    },
+    {
+      "at": "2026-08-18T10:56:00Z",
+      "event": "A new ticket returned HTTP 201 but remained processing_status=queued; RabbitMQ showed ready backlog, zero unacknowledged messages, and zero consumers."
+    },
+    {
+      "at": "2026-08-18T10:58:00Z",
+      "event": "RabbitMQ ping, API readiness, queue-health, PostgreSQL SELECT 1, and Redis PING all remained healthy, rejecting a broker or dependency outage."
+    },
+    {
+      "at": "2026-08-18T11:00:00Z",
+      "event": "Approved L2 mitigation started only the existing worker container under RUN-WORKER-RECOVERY."
+    },
+    {
+      "at": "2026-08-18T11:01:00Z",
+      "event": "Consumer count returned to one, the queued message drained, the target ticket became processed, and the worker log showed correlated job completion."
+    }
+  ],
+  "evidence": [
+    "healthy baseline with one RabbitMQ consumer and drained queue",
+    "baseline ticket reached processing_status=processed",
+    "incident ticket creation returned HTTP 201 while worker was absent",
+    "incident ticket remained processing_status=queued",
+    "RabbitMQ nightwatch-jobs queue showed messages_ready at least one, messages_unacknowledged zero, and consumers zero",
+    "API readiness and queue-health remained HTTP 200",
+    "PostgreSQL SELECT 1 and Redis PING remained successful",
+    "RabbitMQ diagnostics ping remained successful",
+    "incident request ID appeared in API logs but not worker logs before recovery",
+    "same worker container was started rather than redeployed",
+    "consumer count returned to one and queue drained after worker-only recovery",
+    "target request ID appeared in worker job_completed log after recovery",
+    "API container identity remained unchanged"
+  ],
+  "resolution": "L2 isolated the fault to a missing worker consumer rather than RabbitMQ or API availability. The existing worker container was started under the approved worker-recovery runbook, restoring the consumer and processing the already queued durable event without restarting API, PostgreSQL, Redis, or RabbitMQ."
+}
