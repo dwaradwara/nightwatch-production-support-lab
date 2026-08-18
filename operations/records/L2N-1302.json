@@ -1,0 +1,58 @@
+{
+  "record_type": "l2_notes",
+  "id": "L2N-1302",
+  "created_at": "2026-08-18T11:22:00Z",
+  "owner": "L2-On-Shift",
+  "incident_id": "INC-1302",
+  "impact_assessment": "The synchronous API remains available but one durable ticket event cannot complete. Repeated retries create asynchronous customer delay and can become a retry storm if the underlying processing condition persists.",
+  "hypotheses": [
+    {
+      "hypothesis": "RabbitMQ broker outage",
+      "status": "rejected",
+      "evidence": "rabbitmq-diagnostics ping succeeds and queue-health remains HTTP 200."
+    },
+    {
+      "hypothesis": "Worker consumer missing",
+      "status": "rejected",
+      "evidence": "RabbitMQ reports consumers=1 throughout the incident and the worker emits repeated correlated job_started/job_failed events."
+    },
+    {
+      "hypothesis": "Message publish failure",
+      "status": "rejected",
+      "evidence": "Ticket creation returns HTTP 201 and the same durable event is repeatedly delivered to the worker."
+    },
+    {
+      "hypothesis": "Broad PostgreSQL or Redis outage",
+      "status": "rejected",
+      "evidence": "API readiness remains HTTP 200, PostgreSQL SELECT 1 succeeds, and Redis returns PONG."
+    },
+    {
+      "hypothesis": "Worker processing operation fails and message is requeued",
+      "status": "confirmed",
+      "evidence": "The same request ID generates repeated worker job_failed events with the controlled processing exception while the ticket remains queued and consumer count stays one."
+    }
+  ],
+  "actions": [
+    {
+      "action": "Capture queue total/ready/unacknowledged counts and consumer count",
+      "reason": "Differentiate repeated processing failure from QW-001 consumer loss and from a broker outage."
+    },
+    {
+      "action": "Correlate the affected request ID across repeated worker job_failed entries",
+      "reason": "Prove the same durable job is being delivered, failing, and requeued rather than several unrelated jobs failing."
+    },
+    {
+      "action": "Confirm API readiness, queue-health, PostgreSQL, Redis, and RabbitMQ broker health",
+      "reason": "Bound the incident to the processing path before changing any runtime component."
+    },
+    {
+      "action": "Clear only the confirmed transient processing condition",
+      "reason": "Use the smallest safe remediation and preserve the live consumer so the existing durable message can be retried."
+    },
+    {
+      "action": "Verify one correlated job_completed event, processed ticket state, empty queue, and unchanged worker/API container identities",
+      "reason": "Prove recovery of the original customer work without restart or redeployment."
+    }
+  ],
+  "current_assessment": "QW-002 is resolved only after the same valid event transitions from repeated correlated failures to one successful completion with the same worker process/container path. If the underlying cause cannot be safely cleared, failures continue, or the message itself is permanently invalid, L2 must stop treating retries as recovery and escalate toward the QW-004 poison-message/quarantine path."
+}
