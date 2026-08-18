@@ -4,6 +4,10 @@ DB-006 trains recovery from confirmed logical data loss. The exercise is intenti
 
 > This is a simulated production-support exercise. It does not represent commercial production recovery experience.
 
+## Status
+
+**COMPLETED — August 18, 2026.** DB-006 closes the PostgreSQL/database subtrack of OPSFORGE Phase 6. Phase 6 itself remains in progress because the application, queue/worker, proxy/network/security, and delivery incident domains are separate workstreams.
+
 ## Scenario
 
 The isolated NIGHTWATCH environment starts with:
@@ -94,6 +98,37 @@ DB-006 is not considered recovered until all of the following pass:
 - a transactional write/rollback probe that proves write capability without changing restored data.
 
 The workflow also records clean-validation and primary-restore durations as CI exercise evidence. These timings are not production RTO claims.
+
+## Measured CI evidence
+
+`OPSFORGE DB-006 Backup Restore` run #3 on branch head `ebfceeec77c613fba0a3f74a23cbe160fcde18c7` proved:
+
+- baseline ticket count: `3`
+- baseline `/health/ready`: HTTP `200`
+- baseline `/api/tickets`: HTTP `200`
+- baseline `customer_activity`: `100000` rows
+- custom-format backup size: `1,131,089` bytes
+- backup SHA-256: `aaedbd4ff1dd6bf1cc1d6cec5ba7264b4389b3bafc8a07439877e95b6db7a85d`
+- clean validation restore duration: `499 ms`
+- validation ticket count: `3`
+- validation ticket fingerprint: `b0f15cd8c39e9016ad3687ffde1388a4`
+- validation `customer_activity`: `100000` rows
+- incident ticket count: `0`
+- incident `/health/ready`: HTTP `200`
+- incident `/api/tickets`: HTTP `200` with an empty list
+- incident `customer_activity`: `100000` rows
+- backup checksum after incident matched the retained SHA-256 exactly
+- primary restore duration: `417 ms`
+- recovered ticket count: `3`
+- recovered ticket fingerprint: `b0f15cd8c39e9016ad3687ffde1388a4`
+- recovered `customer_activity`: `100000` rows
+- recovered `/health/ready`: HTTP `200`
+- recovered `/api/tickets`: HTTP `200` with `3` tickets
+- transactional insert/rollback probe completed and ticket count remained `3`
+- PostgreSQL accepted connections after recovery
+- 35 evidence files were uploaded
+
+The measured restore durations are CI exercise timings only. They are not production RTO measurements.
 
 ## What this exercise does not claim
 
