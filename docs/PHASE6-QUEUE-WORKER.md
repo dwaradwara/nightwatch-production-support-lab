@@ -8,10 +8,10 @@ The Queue / Worker domain trains L2 diagnosis of asynchronous customer-impact fa
 
 1. QW-001 — consumer missing — complete
 2. QW-002 — processing failure / retry — complete
-3. QW-003 — queue backlog — under validation
+3. QW-003 — queue backlog — complete
 4. QW-004 — poison job
 
-**Queue / Worker domain status: IN PROGRESS.** QW-001 and QW-002 are complete; QW-003 is under validation; QW-004 remains.
+**Queue / Worker domain status: IN PROGRESS.** QW-001 through QW-003 are complete; QW-004 remains.
 
 Phase 7 later removes the root-cause labels and turns validated incidents into blind scenarios.
 
@@ -214,7 +214,28 @@ Operational records:
 
 ### Measured QW-003 proof
 
-Pending the first successful dedicated CI run. Measured values will be recorded only after runtime proof, followed by a fresh exact-head regression cycle.
+`OPSFORGE Queue Worker Incidents` run #7 proved:
+
+- healthy baseline: `messages=0`, `messages_ready=0`, `messages_unacknowledged=0`, `consumers=1`
+- `30` tickets were published in `4.534 s` (`~6.617/s`)
+- controlled processing delay: `0.60 s`
+- queue depth grew `8 -> 16 -> 24` across the three arrival batches
+- queue composition at peak: `19` ready, `5` unacknowledged, `1` consumer
+- database progress across samples: `2/8`, `4/16`, then `7/23` processed/queued
+- after arrivals stopped, queue depth fell from `24` to `19` while still non-zero, proving continued progress rather than a stuck worker
+- progress snapshot: `14` ready, `5` unacknowledged, `1` consumer
+- API readiness and queue-health remained HTTP `200`
+- PostgreSQL `SELECT 1`, Redis `PONG`, and RabbitMQ ping all succeeded
+- during diagnosis: `0` correlated failures and `15` correlated completions
+- tail ticket ID `34` remained queued during the incident
+- removing only the throughput delay drained the remaining backlog in `1.648 s`
+- post-recovery queue returned to `0/0/0` with `1` consumer
+- all `30/30` controlled tickets reached `processed`
+- final correlated outcomes: `0` failures and `30` completions
+- worker and API container identities were unchanged
+- `133` evidence files were retained
+
+The durable lesson is that **a live, successful consumer can still be under-capacity**. Queue trend plus completion progress distinguishes throughput saturation from worker failure.
 
 ## Definition of done for the Queue / Worker incidents
 
