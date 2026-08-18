@@ -1,0 +1,35 @@
+{
+  "record_type": "l3_escalation",
+  "id": "L3E-1203",
+  "created_at": "2026-08-18T09:46:00Z",
+  "owner": "L2-On-Shift",
+  "incident_id": "INC-1203",
+  "business_impact": "Customers can create tickets but ticket-detail reads return HTTP 500 when APP003_TICKET_EVENT_LIMIT contains an unsupported non-integer runtime value.",
+  "first_observed_at": "2026-08-18T09:40:00Z",
+  "affected_version": "app003-<git-sha>",
+  "reproduction": "Deploy the APP-003 configuration-aware exercise image with its default valid setting and confirm ticket-detail reads succeed. Recreate only the API runtime with APP003_TICKET_EVENT_LIMIT=not-a-number using the temporary Compose override. The same release/image remains healthy at /health/ready, but GET /api/tickets/<id> returns HTTP 500 and the API logs a structured configuration_error. Correct the setting to a supported integer and recreate the API on the same image; the original request returns HTTP 200.",
+  "evidence": [
+    "healthy baseline ticket-detail read on the same APP-003 image",
+    "failing request ID retained from the Nginx response",
+    "same request ID appears in Nginx and API logs",
+    "API log contains configuration_error for APP003_TICKET_EVENT_LIMIT=not-a-number",
+    "Tempo and Loki contain the failing request correlation",
+    "PostgreSQL, Redis, RabbitMQ, Nginx, and readiness remain healthy",
+    "release identity is unchanged",
+    "API image ID is identical before injection, during failure, and after recovery",
+    "effective container environment proves the malformed value was deployed",
+    "correcting the setting restores the original request and full customer/release verification without code rollback"
+  ],
+  "steps_already_performed": [
+    "confirmed customer scope and affected route",
+    "verified the healthy baseline on the same exercise image",
+    "checked PostgreSQL, Redis, RabbitMQ, Nginx and readiness",
+    "compared release identity and API image ID before and after the config change",
+    "inspected the effective API container environment",
+    "correlated the failing request through Nginx, API, Loki and Tempo",
+    "avoided code rollback and changes to healthy infrastructure",
+    "corrected only the malformed runtime value and re-tested the original symptom plus full customer journey"
+  ],
+  "suspected_component": "nightwatch-ticket-api runtime configuration validation/deployment controls",
+  "requested_action": "Application/platform owner to prevent unsupported values from reaching the runtime by adding configuration schema validation or deployment-time admission checks for APP003_TICKET_EVENT_LIMIT. Review whether invalid configuration should fail deployment/readiness rather than surfacing first on a customer request."
+}
