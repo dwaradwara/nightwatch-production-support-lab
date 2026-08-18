@@ -8,10 +8,10 @@ The Queue / Worker domain trains L2 diagnosis of asynchronous customer-impact fa
 
 1. QW-001 — consumer missing — complete
 2. QW-002 — processing failure / retry — complete
-3. QW-003 — queue backlog
+3. QW-003 — queue backlog — under validation
 4. QW-004 — poison job
 
-**Queue / Worker domain status: IN PROGRESS.** QW-001 and QW-002 are complete; QW-003 and QW-004 remain.
+**Queue / Worker domain status: IN PROGRESS.** QW-001 and QW-002 are complete; QW-003 is under validation; QW-004 remains.
 
 Phase 7 later removes the root-cause labels and turns validated incidents into blind scenarios.
 
@@ -161,6 +161,60 @@ Operational records:
 - 36 evidence files were retained
 
 The durable lesson is that **a live consumer does not prove successful processing**. Request-level failure correlation, queue state, and worker metrics distinguish transient processing failure from missing-consumer and broker-outage scenarios.
+
+## QW-003 — queue backlog
+
+Customer-facing behavior:
+
+```text
+Ticket create                -> HTTP 201
+API readiness                -> healthy
+RabbitMQ broker              -> healthy
+RabbitMQ consumers           -> 1
+Worker                       -> running/healthy
+Worker outcomes              -> successful
+Queue depth                  -> grows across arrival batches
+Tail tickets                 -> remain queued
+```
+
+### Diagnostic objective
+
+L2 must distinguish a throughput backlog from:
+
+- QW-001 consumer loss;
+- QW-002 processing failure/retry;
+- RabbitMQ outage;
+- publish failure;
+- a broad database/cache outage;
+- a single poison message.
+
+The controlled fault is a temporary `600 ms` ticket-scoped processing delay. Worker code is unchanged. Three fast batches of ten tickets are published while one consumer continues successfully processing earlier events.
+
+Required proof includes queue growth across all three samples, one consumer throughout, zero correlated failures, some correlated completions while backlog remains, healthy dependencies, and a later progress sample showing the queue shrinking but still non-zero after arrivals stop.
+
+### Mitigation objective
+
+QW-003 uses `RUN-WORKER-BACKLOG`. L2 disables only the confirmed temporary throughput constraint and leaves the healthy worker and dependencies running. Recovery is complete only when the entire original backlog drains, all controlled tickets become `processed`, and every request has exactly one completion with zero failures.
+
+A sustained real-capacity mismatch that persists after transient constraints are removed should be escalated for approved worker scaling or performance remediation rather than blind restarts or queue purges.
+
+Detailed operator note:
+
+- `docs/QW-003-QUEUE-BACKLOG.md`
+
+Executable controller:
+
+- `scripts/qw_incident_003.sh`
+
+Operational records:
+
+- `INC-1303`
+- `L2N-1303`
+- `RUN-WORKER-BACKLOG`
+
+### Measured QW-003 proof
+
+Pending the first successful dedicated CI run. Measured values will be recorded only after runtime proof, followed by a fresh exact-head regression cycle.
 
 ## Definition of done for the Queue / Worker incidents
 
