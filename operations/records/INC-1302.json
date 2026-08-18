@@ -1,0 +1,57 @@
+{
+  "record_type": "incident",
+  "id": "INC-1302",
+  "created_at": "2026-08-18T11:18:00Z",
+  "owner": "L2-On-Shift",
+  "title": "Worker repeatedly fails and requeues valid ticket event",
+  "severity": "P2",
+  "status": "Resolved",
+  "service": "rabbitmq-worker-processing",
+  "source": "QW-002 controlled transient processing-failure exercise",
+  "detected_at": "2026-08-18T11:18:00Z",
+  "acknowledged_at": "2026-08-18T11:22:00Z",
+  "customer_impact": "Ticket creation remains available, but the affected ticket stays in queued processing state while the live worker repeatedly receives and fails the same valid durable event.",
+  "scope": "RabbitMQ broker, API, PostgreSQL connectivity, Redis, and the worker consumer remain healthy. The fault is ticket-scoped to the worker's processing update and produces repeated nack/requeue cycles for one valid message.",
+  "timeline": [
+    {
+      "at": "2026-08-18T11:18:00Z",
+      "event": "A controlled ticket-scoped PostgreSQL trigger began rejecting the worker's processed-state update while all services and the RabbitMQ consumer remained online."
+    },
+    {
+      "at": "2026-08-18T11:22:00Z",
+      "event": "L2 acknowledged the P2 asynchronous processing degradation and correlated the affected ticket request ID through repeated worker job_failed events."
+    },
+    {
+      "at": "2026-08-18T11:24:00Z",
+      "event": "RabbitMQ still reported one consumer and retained the message in ready/unacknowledged state while the ticket remained processing_status=queued."
+    },
+    {
+      "at": "2026-08-18T11:26:00Z",
+      "event": "API readiness, queue-health, PostgreSQL SELECT 1, Redis PING, and RabbitMQ diagnostics remained healthy, rejecting broker, consumer-loss, and broad dependency-outage hypotheses."
+    },
+    {
+      "at": "2026-08-18T11:28:00Z",
+      "event": "The controlled transient processing condition was disabled without restarting worker, API, RabbitMQ, PostgreSQL, or Redis."
+    },
+    {
+      "at": "2026-08-18T11:29:00Z",
+      "event": "The same consumer retried the same request successfully, the original ticket became processed, and queue depth returned to zero."
+    }
+  ],
+  "evidence": [
+    "healthy baseline with one RabbitMQ consumer and completed ticket processing",
+    "incident ticket creation returned HTTP 201",
+    "incident ticket remained processing_status=queued while the fault was active",
+    "same request ID produced at least three correlated worker job_failed events",
+    "worker job_failed log included the controlled processing exception",
+    "RabbitMQ consumer count remained one during the incident",
+    "the failing message remained in ready or unacknowledged queue state during retries",
+    "API readiness and queue-health remained HTTP 200",
+    "PostgreSQL SELECT 1 and Redis PING remained successful",
+    "RabbitMQ diagnostics ping remained successful",
+    "worker and API container identities remained unchanged",
+    "after clearing only the transient processing condition, the same request produced one job_completed event",
+    "queue returned to zero messages and the original ticket became processed"
+  ],
+  "resolution": "L2 isolated the issue to repeated worker processing failures rather than consumer loss or broker outage. The ticket-scoped transient condition was cleared, allowing the already-running worker to retry the same durable message successfully. No worker restart, image redeployment, broker restart, database restart, or API restart was used."
+}
