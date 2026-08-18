@@ -1,0 +1,76 @@
+name: OPSFORGE Application Incidents
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "api/**"
+      - "scripts/build_release.sh"
+      - "scripts/app_incident_*.sh"
+      - "operations/records/**"
+      - "docs/PHASE6-APPLICATION.md"
+      - "docs/APP-*.md"
+      - ".github/workflows/application-incidents.yml"
+  workflow_dispatch:
+
+jobs:
+  app-001-api-500-regression:
+    runs-on: ubuntu-latest
+    env:
+      APP001_EVIDENCE_DIR: ${{ github.workspace }}/.opsforge/evidence/app-001
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Validate APP-001 shell syntax
+        run: |
+          bash -n scripts/app_incident_001.sh
+          bash -n scripts/build_release.sh
+
+      - name: Prepare CI secrets and TLS
+        run: |
+          cp .env.example .env
+          openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout tls/nightwatch-fixed.key \
+            -out tls/nightwatch-fixed.crt \
+            -days 1 \
+            -subj "/CN=nightwatch.local" \
+            -addext "subjectAltName=DNS:nightwatch.local"
+
+      - name: Define APP-001 releases
+        run: |
+          SHORT_SHA="${GITHUB_SHA::10}"
+          echo "APP001_GOOD_RELEASE=app001-good-$SHORT_SHA" >> "$GITHUB_ENV"
+          echo "APP001_BAD_RELEASE=app001-bad-$SHORT_SHA" >> "$GITHUB_ENV"
+
+      - name: Build known-good release
+        run: bash scripts/build_release.sh "$APP001_GOOD_RELEASE"
+
+      - name: Build application-regression release
+        run: |
+          bash scripts/build_release.sh "$APP001_BAD_RELEASE" ticket-read-api-500
+          docker run --rm "nightwatch-api:$APP001_BAD_RELEASE" python -m py_compile /app/app.py
+
+      - name: Exercise APP-001 diagnosis rollback and recovery
+        run: bash scripts/app_incident_001.sh "$APP001_GOOD_RELEASE" "$APP001_BAD_RELEASE"
+
+      - name: Show APP-001 evidence summary
+        if: always()
+        run: |
+          find "$APP001_EVIDENCE_DIR" -maxdepth 1 -type f -print | sort || true
+          cat "$APP001_EVIDENCE_DIR/diagnosis.txt" 2>/dev/null || true
+          cat "$APP001_EVIDENCE_DIR/recovery.txt" 2>/dev/null || true
+
+      - name: Upload APP-001 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: opsforge-app001-evidence-${{ github.run_id }}
+          path: .opsforge/evidence/app-001
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Clean APP-001 environment
+        if: always()
+        run: bash scripts/down_environment.sh staging --volumes || true
