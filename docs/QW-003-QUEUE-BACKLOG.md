@@ -118,4 +118,31 @@ The existing `OPSFORGE Queue Worker Incidents` workflow runs QW-001, QW-002, and
 
 ## Measured proof
 
-Measured CI values will be written here only after the first successful QW-003 runtime proof. The resulting documentation-complete commit will then receive a fresh exact-head validation cycle before merge.
+`OPSFORGE Queue Worker Incidents` run #7 proved:
+
+- healthy baseline: `messages=0`, `messages_ready=0`, `messages_unacknowledged=0`, `consumers=1`
+- controlled workload: `30` tickets published in `4.534 s`
+- approximate arrival rate: `6.617 tickets/s`
+- controlled processing delay: `0.60 s` per QW-003 processed-state update
+- queue sample 1: `8` messages (`3` ready, `5` unacknowledged, `1` consumer)
+- queue sample 2: `16` messages (`11` ready, `5` unacknowledged, `1` consumer)
+- queue sample 3: `24` messages (`19` ready, `5` unacknowledged, `1` consumer)
+- database processing counts progressed from `2 processed / 8 queued` to `4 / 16` to `7 / 23`
+- after arrivals stopped, queue depth fell from `24` to `19` while remaining non-zero, proving continued worker progress
+- progress snapshot: `14` ready, `5` unacknowledged, `1` consumer
+- API readiness remained HTTP `200`
+- queue-health remained HTTP `200`
+- PostgreSQL `SELECT 1` returned `1`
+- Redis returned `PONG`
+- RabbitMQ diagnostic ping succeeded
+- incident worker outcome summary: `0` correlated failures and `15` correlated completions while backlog remained
+- tail ticket ID `34` remained `processing_status=queued` during diagnosis
+- disabling only the controlled delay drained the remaining backlog in `1.648 s`
+- post-recovery queue: `0` total, `0` ready, `0` unacknowledged, `1` consumer
+- all `30/30` controlled tickets reached `processed`
+- final correlated outcomes: `0` failures and `30` completions
+- worker container identity remained unchanged
+- API container identity remained unchanged
+- `133` evidence files were retained
+
+The measured lesson is that the queue was growing **while successful processing continued**. Queue trend, arrival rate, completion progress, and consumer state identified a throughput-capacity mismatch without misclassifying the worker as down or failing.
