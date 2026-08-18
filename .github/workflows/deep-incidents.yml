@@ -218,7 +218,7 @@ jobs:
       GRAFANA_ADMIN_PASSWORD: opsforge-ci-grafana-password
       DB004_EVIDENCE_DIR: ${{ github.workspace }}/.opsforge/evidence/db-004
       DB004_MAX_CONNECTIONS: "12"
-      DB004_POOL_HOLD_SECONDS: "20"
+      DB004_POOL_HOLD_SECONDS: "45"
 
     steps:
       - name: Checkout repository
