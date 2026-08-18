@@ -163,8 +163,13 @@ diagnose_loss() {
   psql_db "$POSTGRES_DB" -c "SELECT count(*) AS tickets, (SELECT count(*) FROM customer_activity) AS customer_activity FROM tickets;" \
     > "$EVIDENCE_DIR/loss-database-inventory.txt"
 
+  local expected_hash actual_hash
+  expected_hash="$(awk '{print $1}' "$EVIDENCE_DIR/backup-sha256.txt")"
+  actual_hash="$(sha256sum "$BACKUP_FILE" | awk '{print $1}')"
+  printf 'expected_sha256=%s\nactual_sha256=%s\n' "$expected_hash" "$actual_hash" \
+    | tee "$EVIDENCE_DIR/backup-checksum-verification.txt"
   [[ -s "$BACKUP_FILE" ]]
-  sha256sum -c <(sed "s#  .*#  $BACKUP_FILE#" "$EVIDENCE_DIR/backup-sha256.txt") > "$EVIDENCE_DIR/backup-checksum-verification.txt"
+  [[ "$expected_hash" = "$actual_hash" ]]
 
   echo "DB-006 diagnosis verified: logical ticket-data loss, not database outage or schema loss; validated backup is available for recovery."
 }
@@ -185,12 +190,15 @@ recover_primary() {
   printf 'primary_restore_duration_ms=%s\n' "$duration" | tee "$EVIDENCE_DIR/primary-restore-duration.txt"
 
   dc start api >/dev/null
+  local recovered=0
   for attempt in {1..40}; do
     if [[ "$(api_code /health/ready "$EVIDENCE_DIR/recovery-readiness.json")" = "200" ]]; then
+      recovered=1
       break
     fi
     sleep 1
   done
+  [[ "$recovered" = "1" ]]
 
   echo "DB-006 approved simulated restore completed from the previously validated backup."
 }
@@ -198,18 +206,21 @@ recover_primary() {
 verify_recovery() {
   schema_contract "$POSTGRES_DB" > "$EVIDENCE_DIR/final-schema-contract.txt"
 
-  local final_count final_fp final_activity ready_code tickets_code api_count write_probe
+  local final_count final_fp final_activity ready_code tickets_code api_count write_probe_count
   final_count="$(ticket_count "$POSTGRES_DB")"
   final_fp="$(ticket_fingerprint "$POSTGRES_DB")"
   final_activity="$(activity_count "$POSTGRES_DB")"
   ready_code="$(api_code /health/ready "$EVIDENCE_DIR/final-readiness.json")"
   tickets_code="$(api_code /api/tickets "$EVIDENCE_DIR/final-tickets.json")"
   api_count="$(api_ticket_count "$EVIDENCE_DIR/final-tickets.json")"
-  write_probe="$(scalar "$POSTGRES_DB" "BEGIN; INSERT INTO tickets (title,severity,status,processing_status,customer_id) VALUES ('db006-write-probe','SEV4','Open','seeded','db006'); ROLLBACK; SELECT count(*) FROM tickets;")"
+
+  psql_db "$POSTGRES_DB" -qAtc "BEGIN; INSERT INTO tickets (title,severity,status,processing_status,customer_id) VALUES ('db006-write-probe','SEV4','Open','seeded','db006'); ROLLBACK;" \
+    > "$EVIDENCE_DIR/post-restore-write-probe.txt"
+  write_probe_count="$(ticket_count "$POSTGRES_DB")"
 
   printf 'baseline_ticket_count=%s\nfinal_ticket_count=%s\nbaseline_ticket_fingerprint=%s\nfinal_ticket_fingerprint=%s\nbaseline_activity_count=%s\nfinal_activity_count=%s\nreadiness_http=%s\ntickets_http=%s\napi_ticket_count=%s\npost_restore_write_probe_count=%s\n' \
     "$BASELINE_TICKET_COUNT" "$final_count" "$BASELINE_TICKET_FINGERPRINT" "$final_fp" \
-    "$BASELINE_ACTIVITY_COUNT" "$final_activity" "$ready_code" "$tickets_code" "$api_count" "$write_probe" \
+    "$BASELINE_ACTIVITY_COUNT" "$final_activity" "$ready_code" "$tickets_code" "$api_count" "$write_probe_count" \
     | tee "$EVIDENCE_DIR/final-integrity.txt"
 
   [[ "$final_count" = "$BASELINE_TICKET_COUNT" ]]
@@ -218,7 +229,8 @@ verify_recovery() {
   [[ "$ready_code" = "200" ]]
   [[ "$tickets_code" = "200" ]]
   [[ "$api_count" = "$BASELINE_TICKET_COUNT" ]]
-  [[ "$write_probe" = "$BASELINE_TICKET_COUNT" ]]
+  [[ "$write_probe_count" = "$BASELINE_TICKET_COUNT" ]]
+  [[ "$(ticket_fingerprint "$POSTGRES_DB")" = "$BASELINE_TICKET_FINGERPRINT" ]]
 
   dc exec -T db pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" | tee "$EVIDENCE_DIR/final-pg-isready.txt"
   echo "DB-006 recovery verified: schema, ticket data, activity workload, customer read path, and transactional write capability match the pre-loss baseline."
