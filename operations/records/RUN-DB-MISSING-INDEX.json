@@ -1,0 +1,37 @@
+{
+  "record_type": "runbook",
+  "id": "RUN-DB-MISSING-INDEX",
+  "created_at": "2026-08-18T07:06:00Z",
+  "owner": "L2-Operations",
+  "title": "Diagnose and recover a missing PostgreSQL supporting index",
+  "trigger": "A known customer query path shows a plan/latency regression while PostgreSQL remains reachable and the suspected supporting index may be absent.",
+  "preconditions": [
+    "confirm customer/business impact and affected query path",
+    "capture recent deployment/change history before database modification",
+    "confirm PostgreSQL is reachable and the incident is not a database-wide outage",
+    "capture pg_stat_activity or equivalent wait-state evidence",
+    "capture current index inventory and EXPLAIN plan before any DDL",
+    "obtain the required simulated change approval before recreating an index"
+  ],
+  "diagnostic_steps": [
+    "verify table row count and affected customer query",
+    "inspect pg_indexes for the expected supporting index",
+    "inspect pg_stat_activity for blocked or long-running sessions",
+    "run EXPLAIN (ANALYZE, BUFFERS) on the exact affected lookup",
+    "confirm the degraded plan performs a sequential scan and does not use the expected composite index",
+    "do not infer root cause from latency alone"
+  ],
+  "mitigation_steps": [
+    "after approval, recreate idx_customer_activity_customer_time using CREATE INDEX CONCURRENTLY where supported",
+    "refresh planner statistics with ANALYZE customer_activity",
+    "do not restart PostgreSQL as a substitute for query-plan diagnosis"
+  ],
+  "validation_steps": [
+    "confirm the index is present in pg_indexes",
+    "repeat EXPLAIN (ANALYZE, BUFFERS) and confirm an index-backed plan",
+    "confirm the customer query returns the expected result set",
+    "compare incident and recovered plan evidence",
+    "observe the query path after recovery before closing the incident"
+  ],
+  "escalation_boundary": "Escalate to DBA/development/change authority when index creation is not pre-approved, the table is too large for the approved procedure, concurrent index creation fails, blocking/replication/storage risk is present, the planner still refuses the index after ANALYZE, or query correctness changes. OPSFORGE's recovery command represents an approved simulated change and is not a claim that L2 may perform unrestricted production DDL."
+}
