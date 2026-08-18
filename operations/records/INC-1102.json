@@ -1,0 +1,53 @@
+{
+  "record_type": "incident",
+  "id": "INC-1102",
+  "created_at": "2026-08-18T07:10:00Z",
+  "owner": "L2-On-Shift",
+  "title": "Customer activity update blocked by long-running PostgreSQL transaction",
+  "severity": "P3",
+  "status": "Resolved",
+  "service": "postgresql-customer-activity",
+  "source": "lock-contention investigation exercise",
+  "detected_at": "2026-08-18T07:10:00Z",
+  "acknowledged_at": "2026-08-18T07:18:00Z",
+  "customer_impact": "Updates targeting one hot customer-activity row are blocked while unrelated database queries and the wider ticket service remain available.",
+  "scope": "Impact is isolated to transactions waiting on the same row-level lock. PostgreSQL is reachable and there is no evidence of database-wide saturation.",
+  "timeline": [
+    {
+      "at": "2026-08-18T07:10:00Z",
+      "event": "Customer-side update became blocked while the database health signal remained green."
+    },
+    {
+      "at": "2026-08-18T07:18:00Z",
+      "event": "L2 acknowledged the P3 degradation and captured transaction/lock evidence before remediation."
+    },
+    {
+      "at": "2026-08-18T07:21:00Z",
+      "event": "pg_stat_activity showed the waiting session in wait_event_type=Lock."
+    },
+    {
+      "at": "2026-08-18T07:22:00Z",
+      "event": "pg_blocking_pids() linked the waiting update to one named blocking transaction; pg_locks evidence was captured."
+    },
+    {
+      "at": "2026-08-18T07:25:00Z",
+      "event": "After targeted simulated approval, the confirmed blocker backend was terminated rather than restarting PostgreSQL."
+    },
+    {
+      "at": "2026-08-18T07:26:00Z",
+      "event": "The previously waiting UPDATE completed successfully and follow-up verification found no remaining lock waiter."
+    }
+  ],
+  "evidence": [
+    "PostgreSQL remained reachable during the incident",
+    "waiter session identified by application_name opsforge-db002-waiter",
+    "waiter showed wait_event_type Lock",
+    "pg_blocking_pids(waiter_pid) identified the named holder backend",
+    "pg_locks inventory captured for holder and waiter before remediation",
+    "only the confirmed blocking backend was terminated",
+    "waiting customer update completed with UPDATE 1 after blocker release",
+    "post-recovery blocked-session count returned to zero",
+    "post-recovery target-row update completed under a 2-second lock timeout"
+  ],
+  "resolution": "L2 proved a specific blocker-to-waiter lock relationship, captured lock evidence, and executed the approved simulated targeted blocker termination. The waiting transaction completed and a separate post-recovery update verified the row was writable without restarting PostgreSQL."
+}
