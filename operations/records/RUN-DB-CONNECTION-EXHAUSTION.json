@@ -1,0 +1,38 @@
+{
+  "record_type": "runbook",
+  "id": "RUN-DB-CONNECTION-EXHAUSTION",
+  "created_at": "2026-08-18T07:53:00Z",
+  "owner": "L2-Operations",
+  "title": "Diagnose and recover PostgreSQL connection exhaustion",
+  "trigger": "New application database connections fail with remaining-connection-slots or too-many-clients errors while PostgreSQL may still answer existing or reserved administrative sessions.",
+  "preconditions": [
+    "confirm whether any administrative or existing PostgreSQL connection remains available",
+    "capture max_connections, superuser_reserved_connections, and reserved_connections when present",
+    "identify session ownership and application_name distribution in pg_stat_activity",
+    "reproduce the failure with an ordinary non-superuser application connection",
+    "confirm the problem is connection-slot capacity rather than authentication, network, lock, or query latency",
+    "obtain approval before terminating application sessions"
+  ],
+  "diagnostic_steps": [
+    "compare current client-session usage with max_connections and reserved connection settings",
+    "group pg_stat_activity by application_name, user, and state to locate dominant consumers",
+    "confirm a non-superuser probe fails with a connection-slot exhaustion error",
+    "confirm the reserved administrative path remains usable if available",
+    "check recent deployment, autoscaling, connection-pool, retry, and timeout changes",
+    "look for idle or unexpectedly duplicated application sessions that explain capacity growth"
+  ],
+  "mitigation_steps": [
+    "release the smallest safe number of known offending application sessions needed to restore ordinary capacity",
+    "prefer evidence-matched session termination or application-pool remediation over restarting PostgreSQL",
+    "do not raise max_connections during an incident without DBA/resource review because each additional backend consumes memory and server resources",
+    "do not mass-terminate unrelated sessions solely to make the connection count decrease"
+  ],
+  "validation_steps": [
+    "a fresh ordinary application connection succeeds",
+    "PostgreSQL remains reachable through the administrative path",
+    "pg_stat_activity shows ordinary capacity below the exhaustion boundary",
+    "customer/API connection acquisition recovers where applicable",
+    "retain connection-setting and session-distribution evidence for problem review"
+  ],
+  "escalation_boundary": "Escalate to DBA/application ownership when the dominant sessions are business-critical or unidentified, reserved administrative capacity is unavailable, saturation immediately recurs, pool/retry behavior needs code or configuration change, or max_connections/resource sizing must be changed."
+}
