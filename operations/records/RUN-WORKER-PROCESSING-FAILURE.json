@@ -1,0 +1,37 @@
+{
+  "record_type": "runbook",
+  "id": "RUN-WORKER-PROCESSING-FAILURE",
+  "created_at": "2026-08-18T11:22:00Z",
+  "owner": "L2-Operations",
+  "title": "Diagnose repeated worker processing failure and safe retry recovery",
+  "trigger": "RabbitMQ has a live consumer but a customer ticket remains queued while the same request ID repeatedly produces worker job_failed events.",
+  "preconditions": [
+    "confirm RabbitMQ broker is reachable",
+    "confirm consumer count is nonzero",
+    "capture request ID, queue state, worker logs, and dependency health before mitigation",
+    "confirm the affected message is a valid expected ticket.created event rather than a malformed or unsupported poison message"
+  ],
+  "diagnostic_steps": [
+    "check queue total, ready, unacknowledged, and consumer counts",
+    "correlate repeated worker job_started and job_failed logs for the same request ID",
+    "inspect worker error_type and error text for the failing processing operation",
+    "confirm ticket processing_status remains queued",
+    "check API readiness, queue-health, PostgreSQL connectivity, Redis, and RabbitMQ broker health",
+    "check worker failure metrics and recent application/dependency changes"
+  ],
+  "mitigation_steps": [
+    "if evidence confirms a transient external processing condition and the corrective action is approved, clear only that condition",
+    "leave the healthy RabbitMQ consumer running so the durable message can retry naturally",
+    "do not restart RabbitMQ, PostgreSQL, Redis, API, or worker solely to clear a processing exception",
+    "do not allow indefinite retry to substitute for escalation when the condition is permanent or unknown"
+  ],
+  "validation_steps": [
+    "the same request ID produces a job_completed event after earlier job_failed events",
+    "the original ticket reaches processing_status=processed",
+    "queue total, ready, and unacknowledged counts return to zero",
+    "consumer count remains at the expected value",
+    "worker and API runtime identities remain unchanged",
+    "customer ticket read and core dependency health remain successful"
+  ],
+  "escalation_boundary": "Escalate to application/L3 or the owning dependency team if the processing exception cannot be safely corrected, if retries continue after the expected recovery, if the message is permanently malformed/unsupported, or if a source/configuration change is required. A permanently failing message belongs to the poison-message/quarantine path rather than unlimited requeue."
+}
