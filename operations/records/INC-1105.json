@@ -1,0 +1,54 @@
+{
+  "record_type": "incident",
+  "id": "INC-1105",
+  "created_at": "2026-08-18T07:50:00Z",
+  "owner": "L2-On-Shift",
+  "title": "Ticket API fails after backward-incompatible PostgreSQL schema migration",
+  "severity": "P2",
+  "status": "Resolved",
+  "service": "nightwatch-ticket-api",
+  "source": "post-change customer-path validation",
+  "detected_at": "2026-08-18T07:50:00Z",
+  "acknowledged_at": "2026-08-18T07:52:00Z",
+  "customer_impact": "Ticket-list requests return HTTP 500 after a database migration even though API readiness and PostgreSQL connectivity remain healthy.",
+  "scope": "The deployed API still expects tickets.processing_status, while the newly applied schema exposes the same data under tickets.job_state. PostgreSQL, Redis, RabbitMQ, and API readiness remain available; the failure is isolated to the application/schema contract.",
+  "timeline": [
+    {
+      "at": "2026-08-18T07:50:00Z",
+      "event": "Post-change validation detected HTTP 500 from /api/tickets while /health/ready remained HTTP 200."
+    },
+    {
+      "at": "2026-08-18T07:52:00Z",
+      "event": "L2 acknowledged the incident and confirmed PostgreSQL remained reachable with SELECT 1."
+    },
+    {
+      "at": "2026-08-18T07:53:00Z",
+      "event": "Schema-contract validation failed because tickets.processing_status was missing; information_schema showed tickets.job_state instead."
+    },
+    {
+      "at": "2026-08-18T07:54:00Z",
+      "event": "API logs confirmed the running application still queried processing_status, proving a release/schema compatibility mismatch."
+    },
+    {
+      "at": "2026-08-18T07:55:00Z",
+      "event": "Pre-change and post-change ticket row count/fingerprint matched, proving the migration was metadata-only and data-preserving."
+    },
+    {
+      "at": "2026-08-18T07:56:00Z",
+      "event": "Approved simulated schema rollback restored processing_status; schema contract and /api/tickets returned healthy and the data fingerprint remained unchanged."
+    }
+  ],
+  "evidence": [
+    "API readiness remained HTTP 200 during the incident",
+    "PostgreSQL SELECT 1 remained successful",
+    "/api/tickets reproduced HTTP 500 after the migration",
+    "schema-contract.sql failed on missing tickets.processing_status",
+    "information_schema showed tickets.job_state present and processing_status absent",
+    "API logs contained the missing processing_status database error",
+    "ticket row count and deterministic data fingerprint were unchanged by the rename",
+    "rollback restored processing_status and removed job_state",
+    "post-recovery schema contract passed and /api/tickets returned HTTP 200",
+    "post-recovery ticket fingerprint matched the baseline"
+  ],
+  "resolution": "L2 proved the incident was a backward-incompatible schema/application mismatch rather than a PostgreSQL outage. Because the migration was a reversible metadata-only rename and ticket data fingerprint was unchanged, the approved simulated rollback restored the previous column contract. Customer-path and data-integrity validation then passed."
+}
