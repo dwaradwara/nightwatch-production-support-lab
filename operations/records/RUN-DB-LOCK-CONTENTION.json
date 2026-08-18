@@ -1,0 +1,39 @@
+{
+  "record_type": "runbook",
+  "id": "RUN-DB-LOCK-CONTENTION",
+  "created_at": "2026-08-18T07:15:00Z",
+  "owner": "L2-Operations",
+  "title": "Diagnose and recover scoped PostgreSQL lock contention",
+  "trigger": "A transaction-dependent customer update is hanging or timing out while PostgreSQL remains reachable and telemetry indicates lock waiting rather than a database-wide outage.",
+  "preconditions": [
+    "confirm PostgreSQL is reachable and this is not a database-wide outage",
+    "capture the affected customer/query scope and first observed timestamp",
+    "identify the waiting backend and its wait_event_type before considering termination",
+    "use pg_blocking_pids and pg_locks to prove the exact blocker relationship",
+    "capture blocker PID, application_name, transaction age, query text, and ownership context",
+    "confirm the proposed recovery is permitted by the current incident runbook or approval path"
+  ],
+  "diagnostic_steps": [
+    "query pg_stat_activity for waiting sessions, transaction age, wait_event_type, wait_event, and query text",
+    "use pg_blocking_pids(waiter_pid) to identify blocking backend IDs",
+    "join blocker IDs back to pg_stat_activity to capture application_name and query context",
+    "inspect pg_locks for granted and waiting lock rows",
+    "check whether the blocker is part of an expected deployment, migration, maintenance job, or business transaction",
+    "check for broader connection saturation or multiple unrelated blockers before classifying the incident as scoped"
+  ],
+  "mitigation_steps": [
+    "do not restart PostgreSQL to resolve a single proven blocker",
+    "do not terminate arbitrary backends based only on age or lock count",
+    "if the exact blocker is proven, tagged as the approved simulated exercise session, and recovery is authorized, terminate only that backend",
+    "if blocker ownership, business safety, replication impact, or transaction criticality is unclear, escalate to DBA/application ownership instead of terminating it"
+  ],
+  "validation_steps": [
+    "waiting session exits the Lock wait state",
+    "affected transaction completes or fails in a controlled and understood way",
+    "expected customer state is visible after recovery",
+    "no DB-002 exercise blocker/waiter sessions remain",
+    "PostgreSQL remains reachable without a service restart",
+    "incident evidence includes the blocker/waiter mapping captured before recovery"
+  ],
+  "escalation_boundary": "Escalate to DBA/application ownership if the blocker is not the explicitly approved simulated session, if multiple production transactions are involved, if termination could lose important work, if the blocker immediately recurs, or if lock contention is caused by application transaction design requiring code or schema changes."
+}
