@@ -1,0 +1,40 @@
+{
+  "record_type": "l2_notes",
+  "id": "L2N-1102",
+  "created_at": "2026-08-18T07:19:00Z",
+  "owner": "L2-On-Shift",
+  "incident_id": "INC-1102",
+  "impact_assessment": "A specific customer-activity update is blocked, but PostgreSQL connectivity and unrelated query paths remain healthy. Severity stays P3 because the contention is localized rather than a database-wide outage.",
+  "hypotheses": [
+    {
+      "hypothesis": "Database outage or connection exhaustion",
+      "status": "rejected",
+      "evidence": "Diagnostic sessions connected normally and unrelated database work remained available."
+    },
+    {
+      "hypothesis": "Slow query caused by missing index",
+      "status": "rejected",
+      "evidence": "The affected operation was waiting on wait_event_type=Lock rather than consuming time in a sequential scan."
+    },
+    {
+      "hypothesis": "One transaction holds a row-level lock needed by the waiting update",
+      "status": "confirmed",
+      "evidence": "pg_stat_activity showed the waiter in Lock wait state and pg_blocking_pids(waiter_pid) resolved one named holder backend; pg_locks captured both sessions."
+    }
+  ],
+  "actions": [
+    {
+      "action": "Capture waiter/blocker PIDs, application names, transaction age, wait event and pg_locks inventory",
+      "reason": "A termination decision requires a proven blocking relationship and transaction context, not a guess based on session age."
+    },
+    {
+      "action": "Terminate only the confirmed blocker after simulated approval",
+      "reason": "Targeted recovery has a smaller blast radius than restarting PostgreSQL or killing unrelated sessions."
+    },
+    {
+      "action": "Wait for the previously blocked UPDATE and run an independent follow-up update",
+      "reason": "Backend termination alone is not proof that customer work resumed or that lock contention cleared."
+    }
+  ],
+  "current_assessment": "The lock contention was resolved through a targeted blocker release. Unknown system transactions, migrations, replication-sensitive sessions, or multi-blocker chains would cross the L2 runbook boundary and require DBA/development escalation."
+}
