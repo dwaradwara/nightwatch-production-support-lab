@@ -11,7 +11,7 @@ if [[ ! "$VERSION" =~ ^[A-Za-z0-9._-]+$ ]]; then
 fi
 
 case "$FAULT_MODE" in
-  none|ticket-create-500|ticket-read-api-500) ;;
+  none|ticket-create-500|ticket-read-api-500|ticket-read-dependency-timeout) ;;
   *)
     echo "Unsupported release fault mode: $FAULT_MODE" >&2
     exit 2
