@@ -1,0 +1,38 @@
+{
+  "record_type": "incident",
+  "id": "INC-1303",
+  "created_at": "2026-08-18T11:45:00Z",
+  "owner": "L2-On-Shift",
+  "title": "RabbitMQ queue backlog grows while worker consumer remains healthy",
+  "severity": "P2",
+  "status": "Resolved",
+  "service": "rabbitmq-worker-processing",
+  "source": "QW-003 controlled throughput-degradation exercise",
+  "detected_at": "2026-08-18T11:45:00Z",
+  "acknowledged_at": "2026-08-18T11:49:00Z",
+  "customer_impact": "Ticket creation remains available, but asynchronous completion is delayed because incoming work arrives faster than the single healthy worker can process it. Some tickets remain queued even though the worker continues successfully completing earlier messages.",
+  "scope": "RabbitMQ, PostgreSQL, Redis, API readiness, and the worker consumer remain healthy. The fault is isolated to reduced processing throughput for QW-003 incident tickets, producing a growing durable queue backlog without processing exceptions.",
+  "timeline": [
+    {"at": "2026-08-18T11:45:00Z", "event": "A controlled ticket-scoped processing delay reduced worker throughput while the existing consumer remained connected."},
+    {"at": "2026-08-18T11:49:00Z", "event": "L2 acknowledged delayed asynchronous completion and began comparing arrival rate, queue depth, consumer count, ticket states, and worker outcomes."},
+    {"at": "2026-08-18T11:51:00Z", "event": "Three controlled arrival batches produced increasing queue depth while consumer count stayed one and worker job completions continued without job_failed events."},
+    {"at": "2026-08-18T11:53:00Z", "event": "API readiness, queue-health, PostgreSQL, Redis, and RabbitMQ broker checks remained healthy, rejecting a broad outage."},
+    {"at": "2026-08-18T11:55:00Z", "event": "The confirmed temporary throughput constraint was disabled without restarting or recreating worker/API containers."},
+    {"at": "2026-08-18T11:56:00Z", "event": "The same worker drained the durable backlog, all QW-003 tickets reached processed state, and queue depth returned to zero."}
+  ],
+  "evidence": [
+    "healthy baseline with one consumer and empty queue",
+    "three controlled arrival batches with queue depth sampled after each batch",
+    "queue depth increases across samples while RabbitMQ consumers remains one",
+    "worker continues correlated successful job completions during backlog growth",
+    "zero correlated job_failed events for QW-003 requests",
+    "tail ticket remains queued while earlier tickets are processed",
+    "API readiness and queue-health remain HTTP 200",
+    "PostgreSQL SELECT 1, Redis PING, and RabbitMQ diagnostic ping remain successful",
+    "worker metrics captured before, during, and after the incident",
+    "temporary processing delay disabled without worker or API restart/redeployment",
+    "all original QW-003 tickets become processed and queue depth returns to zero",
+    "worker and API container identities remain unchanged"
+  ],
+  "resolution": "L2 identified a throughput-capacity mismatch rather than missing consumers, retry failures, or broker outage. The confirmed temporary processing delay was removed, allowing the same healthy worker to drain all durable work without restarting or redeploying services."
+}
