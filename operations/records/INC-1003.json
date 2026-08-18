@@ -1,0 +1,46 @@
+{
+  "record_type": "incident",
+  "id": "INC-1003",
+  "created_at": "2026-08-18T07:00:00Z",
+  "owner": "L2-On-Shift",
+  "title": "Ticket creation fails after application release",
+  "severity": "P2",
+  "status": "Escalated",
+  "service": "ticket-api",
+  "source": "customer escalation",
+  "detected_at": "2026-08-18T07:00:00Z",
+  "acknowledged_at": "2026-08-18T07:06:00Z",
+  "customer_impact": "Multiple customers receive HTTP 500 when creating tickets; read operations remain available.",
+  "scope": "Create-ticket path only; issue began immediately after application release git-example-regression.",
+  "timeline": [
+    {
+      "at": "2026-08-18T07:00:00Z",
+      "event": "Customer escalation received with request ID nw-demo-1003."
+    },
+    {
+      "at": "2026-08-18T07:06:00Z",
+      "event": "L2 acknowledged and reproduced HTTP 500 on POST /api/tickets."
+    },
+    {
+      "at": "2026-08-18T07:10:00Z",
+      "event": "Database, Redis, RabbitMQ, worker, and readiness checks remained healthy."
+    },
+    {
+      "at": "2026-08-18T07:14:00Z",
+      "event": "Tempo and API logs isolated the exception to the create-ticket application path in the new release."
+    },
+    {
+      "at": "2026-08-18T07:17:00Z",
+      "event": "No safe L2 configuration or operational fix identified; evidence package escalated to development."
+    }
+  ],
+  "evidence": [
+    "request ID nw-demo-1003 reproduced through Nginx and API logs",
+    "POST /api/tickets returns HTTP 500",
+    "GET and readiness paths remain healthy",
+    "dependency metrics remain healthy",
+    "failure starts with release git-example-regression",
+    "trace isolates exception to create-ticket application code"
+  ],
+  "resolution": "Pending L3/development action; L2 diagnosis complete and operational workaround unavailable."
+}
