@@ -1,6 +1,6 @@
 # NIGHTWATCH OPSFORGE — Phase 6 Queue / Worker Incidents
 
-The Queue / Worker domain trains L2 diagnosis of asynchronous customer-impact failures. The key operational distinction is that HTTP success and broker reachability do not guarantee durable work is being consumed, acknowledged, retried safely, or drained at a sustainable rate.
+The Queue / Worker domain trains L2 diagnosis of asynchronous customer-impact failures. The key operational distinction is that HTTP success and broker reachability do not guarantee durable work is being consumed, acknowledged, retried safely, quarantined when necessary, or drained at a sustainable rate.
 
 > OPSFORGE is a simulated production-support training and portfolio environment. These exercises are not commercial production incidents.
 
@@ -9,9 +9,9 @@ The Queue / Worker domain trains L2 diagnosis of asynchronous customer-impact fa
 1. QW-001 — consumer missing — complete
 2. QW-002 — processing failure / retry — complete
 3. QW-003 — queue backlog — complete
-4. QW-004 — poison job
+4. QW-004 — poison job — complete
 
-**Queue / Worker domain status: IN PROGRESS.** QW-001 through QW-003 are complete; QW-004 remains.
+**Queue / Worker domain status: COMPLETE.** QW-001 through QW-004 have dedicated executable incidents, operational records, measured evidence, and regression coverage.
 
 Phase 7 later removes the root-cause labels and turns validated incidents into blind scenarios.
 
@@ -100,7 +100,7 @@ RabbitMQ broker              -> healthy
 RabbitMQ consumers           -> 1
 Worker                       -> running/healthy
 Same request ID              -> repeated job_failed
-Message                      -> nack/requeue loop while fault exists
+Message                      -> bounded republish/retry while fault exists
 ```
 
 ### Diagnostic objective
@@ -113,7 +113,7 @@ L2 must distinguish a processing failure from:
 - broad PostgreSQL or Redis outage;
 - a permanently malformed poison message.
 
-The controlled fault is a temporary ticket-scoped PostgreSQL trigger that rejects only the worker update from `queued` to `processed`. Worker source code is unchanged. The worker remains connected to RabbitMQ, repeatedly receives the same valid event, logs `job_failed`, and issues `basic_nack(..., requeue=True)`.
+The controlled fault is a temporary ticket-scoped PostgreSQL trigger that rejects only the worker update from `queued` to `processed`. Worker source code is unchanged by the QW-002 exercise. After QW-004 hardened the platform, failures are retried through publisher-confirmed republish with retry metadata rather than unbounded `basic_nack(..., requeue=True)`. The QW-002 CI job uses an explicit high retry ceiling so the transient condition can clear before quarantine and the same valid event can prove retry recovery.
 
 Required proof includes at least three correlated failures for one request ID, one live consumer, the message remaining in ready/unacknowledged state, healthy API/dependency checks, and no `job_completed` while the transient fault remains active.
 
@@ -121,7 +121,7 @@ Required proof includes at least three correlated failures for one request ID, o
 
 QW-002 uses `RUN-WORKER-PROCESSING-FAILURE`. L2 clears only the confirmed transient processing condition and leaves the healthy worker consumer running. Recovery is complete only when the **same request ID** later produces exactly one `job_completed`, the original ticket becomes `processed`, and queue depth returns to zero without worker/API restart or redeployment.
 
-A permanently failing or malformed event must not be treated as a valid retry case; that belongs to QW-004 poison-message handling.
+A permanently failing or malformed event must not be treated as a valid retry case; QW-004 provides bounded retry and quarantine handling for that condition.
 
 Detailed operator note:
 
@@ -237,14 +237,91 @@ Operational records:
 
 The durable lesson is that **a live, successful consumer can still be under-capacity**. Queue trend plus completion progress distinguishes throughput saturation from worker failure.
 
+## QW-004 — poison job
+
+Customer-facing behavior:
+
+```text
+Affected ticket               -> remains queued
+RabbitMQ broker               -> healthy
+RabbitMQ consumers            -> 1
+Worker                        -> running/healthy
+Poison request                -> deterministic failures
+Retry budget                  -> bounded
+Healthy requests              -> continue to complete
+Poison message                -> durable quarantine
+```
+
+### Diagnostic objective
+
+L2 must distinguish permanent message incompatibility from:
+
+- QW-001 consumer loss;
+- QW-002 transient retry failure;
+- QW-003 throughput backlog;
+- broad API, PostgreSQL, Redis, or RabbitMQ failure.
+
+QW-004 closes the worker's previous infinite-requeue gap by adding bounded retries, publisher-confirmed republish, retry metadata, a durable application-managed quarantine queue, and retry/quarantine metrics. The controlled poison event references a valid queued ticket but deliberately carries unsupported `event_type=ticket.unsupported`.
+
+The message must exhaust the configured retry ceiling and quarantine exactly once while separate healthy tickets continue through the same consumer.
+
+### Mitigation and escalation objective
+
+QW-004 uses `RUN-WORKER-POISON-JOB` and `L3E-1304`.
+
+L2 preserves the quarantined payload and correlation metadata, proves the failure is message-scoped, and escalates producer/application contract ownership rather than restarting the worker or blindly replaying the same invalid event. In this controlled exercise only, the known defect is corrected from `ticket.unsupported` to `ticket.created` and replayed once after inspection.
+
+Detailed operator note:
+
+- `docs/QW-004-POISON-JOB.md`
+
+Executable controller:
+
+- `scripts/qw_incident_004.sh`
+
+Operational records:
+
+- `INC-1304`
+- `L2N-1304`
+- `L3E-1304`
+- `RUN-WORKER-POISON-JOB`
+
+### Measured QW-004 proof
+
+`OPSFORGE Queue Worker Incidents` run #11 proved:
+
+- worker retry ceiling: `5`;
+- poison ticket ID: `5`;
+- poison request ID: `aa283c66-5262-4c43-b41c-bc72ade37655`;
+- poison event ID: `22aaf9ec-4f35-40ec-a1c3-9854eef9029f`;
+- invalid event type: `ticket.unsupported`;
+- before remediation: `6` correlated `job_failed`, `5` `job_retry_scheduled`, `1` `job_quarantined`, `0` `job_completed`;
+- affected ticket remained `queued` while quarantined;
+- main queue was empty with `1` live consumer;
+- quarantine contained exactly `1` ready message;
+- three separate healthy tickets all reached `processed` during the incident;
+- API readiness and queue-health remained HTTP `200`;
+- PostgreSQL `SELECT 1`, Redis `PONG`, and RabbitMQ ping succeeded;
+- controlled quarantine inspection verified the original request and event before correction;
+- corrected replay changed only `ticket.unsupported -> ticket.created` and preserved correlation metadata;
+- original poison ticket then reached `processed`;
+- final outcomes: `6` failures, `5` scheduled retries, `1` quarantine, exactly `1` completion;
+- main queue and quarantine returned to zero;
+- RabbitMQ still reported `1` main-queue consumer;
+- worker and API container identities were unchanged;
+- no worker/API/RabbitMQ restart, queue purge, or application redeployment was used;
+- `51` evidence files were retained.
+
+The durable lesson is that **permanent message failure requires a terminal isolation path**. Bounded retries, quarantine, evidence preservation, healthy-work proof, ownership escalation, and controlled replay prevent one poison event from consuming live worker capacity indefinitely.
+
 ## Definition of done for the Queue / Worker incidents
 
-Each QW incident is complete only when one exact branch head passes:
+The Queue / Worker domain is complete because one exact documentation-complete branch head must pass:
 
-- Support Operations validation for its operational records;
-- the Queue / Worker workflow with all completed QW incidents;
+- Support Operations validation for all operational records;
+- the Queue / Worker workflow with QW-001 through QW-004;
 - existing database deep-incident regressions;
 - existing application-incident regressions;
 - full NIGHTWATCH OPSFORGE staging -> production -> controlled bad-release rejection -> rollback -> independent recovery verification.
 
-The queue/worker domain remains in progress until QW-001 through QW-004 are completed.
+The final documentation-complete QW-004 head is frozen and must satisfy those gates before merge. Phase 6 overall remains active until its other planned incident domains are complete.
