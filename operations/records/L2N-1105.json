@@ -1,0 +1,44 @@
+{
+  "record_type": "l2_notes",
+  "id": "L2N-1105",
+  "created_at": "2026-08-18T07:52:00Z",
+  "owner": "L2-On-Shift",
+  "incident_id": "INC-1105",
+  "impact_assessment": "Customer ticket reads are failing with HTTP 500 after a schema change, so this is P2 customer-impacting degradation even though health/readiness checks are green.",
+  "hypotheses": [
+    {
+      "hypothesis": "PostgreSQL process outage or network failure",
+      "status": "rejected",
+      "evidence": "API readiness remained HTTP 200 and direct PostgreSQL SELECT 1 succeeded during the incident."
+    },
+    {
+      "hypothesis": "Application/schema version mismatch introduced by the latest database change",
+      "status": "confirmed",
+      "evidence": "The deployed API queries processing_status, schema-contract validation reports it missing, information_schema shows job_state instead, and API logs contain the missing-column error."
+    },
+    {
+      "hypothesis": "The migration damaged ticket data and requires restore rather than schema rollback",
+      "status": "rejected",
+      "evidence": "Ticket row count and deterministic data fingerprint match the pre-migration baseline when job_state is interpreted as the renamed processing-status value."
+    }
+  ],
+  "actions": [
+    {
+      "action": "Compare readiness with the real /api/tickets customer path",
+      "reason": "Dependency reachability is not equivalent to application/schema compatibility."
+    },
+    {
+      "action": "Run the version-controlled schema contract and inspect information_schema plus API logs",
+      "reason": "Prove the exact missing/renamed database contract before changing schema or application components."
+    },
+    {
+      "action": "Compare ticket row count and deterministic fingerprint before selecting rollback",
+      "reason": "A schema rollback is safe here only because the change is metadata-only and no ticket data was transformed or dropped."
+    },
+    {
+      "action": "Apply the approved reverse rename and re-run schema, customer-path, readiness, and data-integrity validation",
+      "reason": "Rollback completion alone is not evidence of service recovery or data integrity."
+    }
+  ],
+  "current_assessment": "DB-005 is resolved by evidence-backed rollback because the incompatible migration is reversible and data-preserving. For destructive or data-transforming migrations, L2 must stop and escalate to DBA/development/change ownership for roll-forward, restore, or compensating migration decisions."
+}
