@@ -180,11 +180,42 @@ services:
       nightwatch-net:
         aliases: [nightwatch-synthetic]
 
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.20.1
+    container_name: "${OPSFORGE_CONTAINER_PREFIX:-nightwatch}-postgres-exporter"
+    environment:
+      DATA_SOURCE_URI: "nightwatch-db:5432/${POSTGRES_DB:-nightwatch}?sslmode=disable"
+      DATA_SOURCE_USER: ${POSTGRES_USER:-nightwatch}
+      DATA_SOURCE_PASS: ${POSTGRES_PASSWORD:?Copy .env.example to .env and set POSTGRES_PASSWORD}
+    command:
+      - "--collector.long_running_transactions"
+    expose:
+      - "9187"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      nightwatch-net:
+        aliases: [nightwatch-postgres-exporter]
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.89.0
+    container_name: "${OPSFORGE_CONTAINER_PREFIX:-nightwatch}-redis-exporter"
+    command: ["--redis.addr=redis://nightwatch-redis:6379"]
+    expose:
+      - "9121"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      nightwatch-net:
+        aliases: [nightwatch-redis-exporter]
+
   prometheus:
     image: prom/prometheus:v3.12.0
     container_name: "${OPSFORGE_CONTAINER_PREFIX:-nightwatch}-prometheus"
     volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus:/etc/prometheus:ro
     ports:
       - "127.0.0.1:${PROMETHEUS_HOST_PORT:-9090}:9090"
     depends_on:
@@ -196,6 +227,10 @@ services:
         condition: service_healthy
       synthetic:
         condition: service_healthy
+      postgres-exporter:
+        condition: service_started
+      redis-exporter:
+        condition: service_started
     networks:
       nightwatch-net:
         aliases: [nightwatch-prometheus]
@@ -251,6 +286,7 @@ services:
       - "127.0.0.1:${GRAFANA_HOST_PORT:-3000}:3000"
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
       - nightwatch-grafana-data:/var/lib/grafana
     depends_on:
       - prometheus

@@ -32,7 +32,12 @@ jobs:
           python -m py_compile worker/worker.py
           python -m py_compile synthetic/synthetic.py
           python -c "import pika, psycopg, redis, prometheus_client; print('runtime imports ok')"
+          python -m json.tool grafana/dashboards/opsforge-l2-operations.json >/dev/null
           bash -n scripts/*.sh
+          docker run --rm --entrypoint promtool \
+            -v "$PWD/prometheus:/etc/prometheus:ro" \
+            prom/prometheus:v3.12.0 \
+            check config /etc/prometheus/prometheus.yml
 
       - name: Prepare CI secrets and TLS
         run: |
@@ -121,6 +126,17 @@ jobs:
           find .opsforge/releases -maxdepth 1 -type f -print -exec cat {} \; 2>/dev/null || true
           echo "--- release state ---"
           find .opsforge/state -maxdepth 1 -type f -print -exec cat {} \; 2>/dev/null || true
+          echo "--- verification failures ---"
+          find .opsforge/diagnostics -name failure.txt -print -exec cat {} \; 2>/dev/null || true
+
+      - name: Upload verification diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: opsforge-verification-diagnostics-${{ github.run_id }}
+          path: .opsforge/diagnostics
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Clean staging environment
         if: always()

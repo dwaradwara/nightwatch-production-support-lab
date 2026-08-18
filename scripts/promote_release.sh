@@ -12,23 +12,66 @@ load_opsforge_secrets
 configure_opsforge_environment "$ENVIRONMENT"
 mkdir -p "$OPSFORGE_STATE_DIR"
 
+DIAGNOSTIC_DIR="$ROOT/.opsforge/diagnostics/$ENVIRONMENT-$VERSION"
+mkdir -p "$DIAGNOSTIC_DIR"
+PROMOTION_LOG="$DIAGNOSTIC_DIR/promotion.log"
+
 CURRENT_VERSION=""
 if [[ -f "$OPSFORGE_STATE_DIR/$ENVIRONMENT.current" ]]; then
   CURRENT_VERSION="$(cat "$OPSFORGE_STATE_DIR/$ENVIRONMENT.current")"
 fi
 
-bash "$ROOT/scripts/deploy_release.sh" "$ENVIRONMENT" "$VERSION"
+printf 'environment=%s\nversion=%s\nstage=deploy\n' "$ENVIRONMENT" "$VERSION" \
+  > "$DIAGNOSTIC_DIR/promotion-state.txt"
 
-if bash "$ROOT/scripts/verify_release.sh" "$ENVIRONMENT" "$VERSION"; then
+set +e
+bash "$ROOT/scripts/deploy_release.sh" "$ENVIRONMENT" "$VERSION" 2>&1 | tee -a "$PROMOTION_LOG"
+DEPLOY_STATUS=${PIPESTATUS[0]}
+set -e
+
+if [[ "$DEPLOY_STATUS" -ne 0 ]]; then
+  printf 'environment=%s\nversion=%s\nstage=deploy\nstatus=failed\nexit_code=%s\n' \
+    "$ENVIRONMENT" "$VERSION" "$DEPLOY_STATUS" \
+    > "$DIAGNOSTIC_DIR/promotion-state.txt"
+  echo "::error title=OPSFORGE deployment failed::environment=$ENVIRONMENT version=$VERSION exit_code=$DEPLOY_STATUS"
+  echo "Deployment failed before release verification: environment=$ENVIRONMENT version=$VERSION" >&2
+  exit "$DEPLOY_STATUS"
+fi
+
+printf 'environment=%s\nversion=%s\nstage=verification\n' "$ENVIRONMENT" "$VERSION" \
+  > "$DIAGNOSTIC_DIR/promotion-state.txt"
+
+set +e
+bash "$ROOT/scripts/verify_release.sh" "$ENVIRONMENT" "$VERSION" 2>&1 | tee -a "$PROMOTION_LOG"
+VERIFY_STATUS=${PIPESTATUS[0]}
+set -e
+
+if [[ "$VERIFY_STATUS" -eq 0 ]]; then
   if [[ -n "$CURRENT_VERSION" && "$CURRENT_VERSION" != "$VERSION" ]]; then
     printf '%s\n' "$CURRENT_VERSION" > "$OPSFORGE_STATE_DIR/$ENVIRONMENT.previous"
   fi
   printf '%s\n' "$VERSION" > "$OPSFORGE_STATE_DIR/$ENVIRONMENT.current"
   rm -f "$OPSFORGE_STATE_DIR/$ENVIRONMENT.candidate"
+  printf 'environment=%s\nversion=%s\nstage=accepted\nstatus=passed\n' "$ENVIRONMENT" "$VERSION" \
+    > "$DIAGNOSTIC_DIR/promotion-state.txt"
   echo "Promotion accepted: environment=$ENVIRONMENT version=$VERSION"
   exit 0
 fi
 
+printf 'environment=%s\nversion=%s\nstage=verification\nstatus=failed\nexit_code=%s\n' \
+  "$ENVIRONMENT" "$VERSION" "$VERIFY_STATUS" \
+  > "$DIAGNOSTIC_DIR/promotion-state.txt"
+
+FAILED_CHECK=""
+if [[ -f "$DIAGNOSTIC_DIR/failure.txt" ]]; then
+  FAILED_CHECK=$(awk -F= '$1=="check" {print substr($0, index($0, "=") + 1)}' "$DIAGNOSTIC_DIR/failure.txt")
+fi
+if [[ -z "$FAILED_CHECK" && -f "$PROMOTION_LOG" ]]; then
+  FAILED_CHECK=$(grep -F 'OPSFORGE verification check:' "$PROMOTION_LOG" | tail -n 1 | sed 's/^.*OPSFORGE verification check: //' || true)
+fi
+[[ -n "$FAILED_CHECK" ]] || FAILED_CHECK="unknown verification check"
+
+echo "::error title=OPSFORGE release verification failed::environment=$ENVIRONMENT version=$VERSION check=$FAILED_CHECK"
 echo "Promotion rejected: environment=$ENVIRONMENT version=$VERSION" >&2
 
 if [[ "$ENVIRONMENT" = "production" && -n "$CURRENT_VERSION" ]]; then
@@ -37,4 +80,4 @@ if [[ "$ENVIRONMENT" = "production" && -n "$CURRENT_VERSION" ]]; then
   echo "Rejected production release was rolled back automatically." >&2
 fi
 
-exit 1
+exit "$VERIFY_STATUS"

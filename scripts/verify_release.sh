@@ -16,13 +16,48 @@ BASE_URL="http://127.0.0.1:$NGINX_HTTP_HOST_PORT"
 CUSTOMER_ID="verify-$ENVIRONMENT-$VERSION"
 REQUEST_ID=""
 TICKET_ID=""
+CURRENT_CHECK="initialization"
+DIAGNOSTIC_DIR="$ROOT/.opsforge/diagnostics/$ENVIRONMENT-$VERSION"
+mkdir -p "$DIAGNOSTIC_DIR"
 
 show_failure_evidence() {
-  echo "OPSFORGE release verification FAILED: environment=$ENVIRONMENT version=$VERSION" >&2
-  opsforge_compose ps >&2 || true
-  opsforge_compose logs --no-color --tail=120 nginx api worker synthetic rabbitmq >&2 || true
+  local exit_code=$?
+  printf 'environment=%s\nversion=%s\ncheck=%s\nexit_code=%s\n' \
+    "$ENVIRONMENT" "$VERSION" "$CURRENT_CHECK" "$exit_code" \
+    > "$DIAGNOSTIC_DIR/failure.txt"
+
+  echo "OPSFORGE release verification FAILED: environment=$ENVIRONMENT version=$VERSION check=$CURRENT_CHECK" >&2
+  opsforge_compose ps > "$DIAGNOSTIC_DIR/compose-ps.txt" 2>&1 || true
+  opsforge_compose logs --no-color --tail=160 \
+    nginx api worker synthetic rabbitmq postgres-exporter redis-exporter prometheus grafana alloy loki tempo \
+    > "$DIAGNOSTIC_DIR/service-logs.txt" 2>&1 || true
+
+  curl -fsS "http://127.0.0.1:$PROMETHEUS_HOST_PORT/api/v1/targets" \
+    > "$DIAGNOSTIC_DIR/prometheus-targets.json" 2>/dev/null || true
+  curl -fsS "http://127.0.0.1:$PROMETHEUS_HOST_PORT/api/v1/rules" \
+    > "$DIAGNOSTIC_DIR/prometheus-rules.json" 2>/dev/null || true
+  curl -fsS "http://127.0.0.1:$PROMETHEUS_HOST_PORT/api/v1/label/__name__/values" \
+    > "$DIAGNOSTIC_DIR/prometheus-metric-names.json" 2>/dev/null || true
+  curl -fsS "http://127.0.0.1:$LOKI_HOST_PORT/ready" \
+    > "$DIAGNOSTIC_DIR/loki-ready.txt" 2>/dev/null || true
+  curl -fsS "http://127.0.0.1:$GRAFANA_HOST_PORT/api/health" \
+    > "$DIAGNOSTIC_DIR/grafana-health.json" 2>/dev/null || true
+  curl -fsS -u "$GRAFANA_ADMIN_USER:$GRAFANA_ADMIN_PASSWORD" \
+    "http://127.0.0.1:$GRAFANA_HOST_PORT/api/dashboards/uid/opsforge-l2-operations" \
+    > "$DIAGNOSTIC_DIR/grafana-dashboard.json" 2>/dev/null || true
+
+  cat "$DIAGNOSTIC_DIR/compose-ps.txt" >&2 || true
+  cat "$DIAGNOSTIC_DIR/service-logs.txt" >&2 || true
+  return "$exit_code"
 }
 trap show_failure_evidence ERR
+
+run_check() {
+  CURRENT_CHECK="$1"
+  shift
+  echo "OPSFORGE verification check: $CURRENT_CHECK"
+  "$@"
+}
 
 wait_for_readiness() {
   for attempt in $(seq 1 45); do
@@ -153,6 +188,35 @@ validate_log_correlation() {
   return 1
 }
 
+validate_loki_correlation() {
+  local query result
+  query="{service_name=~\".*(api|worker|nginx).*\"} |= \"$REQUEST_ID\""
+
+  for attempt in $(seq 1 20); do
+    result=$(curl -fsS -G "http://127.0.0.1:$LOKI_HOST_PORT/loki/api/v1/query_range" \
+      --data-urlencode "query=$query" \
+      --data-urlencode 'limit=20' \
+      --data-urlencode 'since=10m' || true)
+    if LOKI_JSON="$result" python - <<'PY'
+import json
+import os
+
+try:
+    payload = json.loads(os.environ['LOKI_JSON'])
+except json.JSONDecodeError:
+    raise SystemExit(1)
+result = payload.get('data', {}).get('result', [])
+raise SystemExit(0 if result else 1)
+PY
+    then
+      echo "Loki contains centralized logs for request ID $REQUEST_ID"
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
 validate_trace_correlation() {
   local query trace_result
   query="{ span.\"nightwatch.request_id\" = \"$REQUEST_ID\" }"
@@ -176,6 +240,24 @@ validate_worker_and_queue() {
   test "$(docker inspect -f '{{.State.Health.Status}}' "$worker_id")" = "healthy"
   opsforge_compose exec -T rabbitmq rabbitmqctl list_queues name consumers | \
     awk '$1=="nightwatch-jobs" && $2>=1 {found=1} END {exit !found}'
+}
+
+prometheus_query_has_result() {
+  local query="$1"
+  local payload
+  payload=$(curl -fsS -G "http://127.0.0.1:$PROMETHEUS_HOST_PORT/api/v1/query" \
+    --data-urlencode "query=$query" || true)
+  PROM_QUERY_JSON="$payload" python - <<'PY'
+import json
+import os
+
+try:
+    payload = json.loads(os.environ['PROM_QUERY_JSON'])
+except json.JSONDecodeError:
+    raise SystemExit(1)
+result = payload.get('data', {}).get('result', [])
+raise SystemExit(0 if result else 1)
+PY
 }
 
 validate_business_telemetry() {
@@ -206,6 +288,71 @@ PY
   return 1
 }
 
+validate_observability_targets() {
+  local queries=(
+    'up{job="nightwatch-postgres"} == 1'
+    'up{job="nightwatch-redis"} == 1'
+    'up{job="nightwatch-rabbitmq"} == 1'
+    'pg_up == 1'
+    'redis_up == 1'
+    'pg_stat_activity_count{datname="nightwatch"}'
+    'rabbitmq_queue_messages_ready{queue="nightwatch-jobs"}'
+  )
+
+  for attempt in $(seq 1 30); do
+    local all_present=1
+    for query in "${queries[@]}"; do
+      if ! prometheus_query_has_result "$query"; then
+        all_present=0
+        break
+      fi
+    done
+    if [[ "$all_present" -eq 1 ]]; then
+      echo "Prometheus dependency and queue telemetry targets are queryable"
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+validate_prometheus_rules() {
+  local rules_json
+  for attempt in $(seq 1 20); do
+    rules_json=$(curl -fsS "http://127.0.0.1:$PROMETHEUS_HOST_PORT/api/v1/rules" || true)
+    if RULES_JSON="$rules_json" python - <<'PY'
+import json
+import os
+
+try:
+    payload = json.loads(os.environ['RULES_JSON'])
+except json.JSONDecodeError:
+    raise SystemExit(1)
+groups = payload.get('data', {}).get('groups', [])
+wanted = {'opsforge-recording', 'opsforge-detection'}
+found = {group.get('name') for group in groups}
+if not wanted.issubset(found):
+    raise SystemExit(1)
+for group in groups:
+    if group.get('name') not in wanted:
+        continue
+    for rule in group.get('rules', []):
+        if rule.get('health') not in (None, 'ok'):
+            raise SystemExit(1)
+raise SystemExit(0)
+PY
+    then
+      if prometheus_query_has_result 'opsforge:postgres_connections' && \
+         prometheus_query_has_result 'opsforge:rabbitmq_consumers'; then
+        echo "OPSFORGE recording and detection rules are loaded and evaluating"
+        return 0
+      fi
+    fi
+    sleep 2
+  done
+  return 1
+}
+
 validate_grafana() {
   for attempt in $(seq 1 20); do
     if curl -fsS "http://127.0.0.1:$GRAFANA_HOST_PORT/api/health" >/dev/null; then
@@ -215,23 +362,31 @@ validate_grafana() {
         "http://127.0.0.1:$GRAFANA_HOST_PORT/api/datasources/uid/loki" | grep '"uid":"loki"' >/dev/null
       curl -fsS -u "$GRAFANA_ADMIN_USER:$GRAFANA_ADMIN_PASSWORD" \
         "http://127.0.0.1:$GRAFANA_HOST_PORT/api/datasources/uid/tempo" | grep '"uid":"tempo"' >/dev/null
-      return 0
+      if curl -fsS -u "$GRAFANA_ADMIN_USER:$GRAFANA_ADMIN_PASSWORD" \
+        "http://127.0.0.1:$GRAFANA_HOST_PORT/api/dashboards/uid/opsforge-l2-operations" | \
+        grep '"title":"OPSFORGE L2 Operations"' >/dev/null; then
+        echo "Grafana datasources and OPSFORGE L2 Operations dashboard are provisioned"
+        return 0
+      fi
     fi
     sleep 2
   done
   return 1
 }
 
-wait_for_readiness
-validate_version
-validate_schema_contract
-validate_browser_contract
-validate_customer_journey
-validate_log_correlation
-validate_trace_correlation
-validate_worker_and_queue
-validate_business_telemetry
-validate_grafana
+run_check "application readiness" wait_for_readiness
+run_check "release identity" validate_version
+run_check "database schema contract" validate_schema_contract
+run_check "browser CORS contract" validate_browser_contract
+run_check "customer journey" validate_customer_journey
+run_check "container log correlation" validate_log_correlation
+run_check "centralized Loki correlation" validate_loki_correlation
+run_check "Tempo trace correlation" validate_trace_correlation
+run_check "worker and queue availability" validate_worker_and_queue
+run_check "business telemetry" validate_business_telemetry
+run_check "dependency and queue metrics" validate_observability_targets
+run_check "Prometheus rules" validate_prometheus_rules
+run_check "Grafana L2 console" validate_grafana
 
 trap - ERR
 printf '%s\n' "OPSFORGE release verification PASSED: environment=$ENVIRONMENT version=$VERSION"
