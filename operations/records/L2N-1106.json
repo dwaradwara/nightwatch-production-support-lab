@@ -1,0 +1,53 @@
+{
+  "record_type": "l2_notes",
+  "id": "L2N-1106",
+  "created_at": "2026-08-18T08:11:00Z",
+  "owner": "L2-On-Shift",
+  "incident_id": "INC-1106",
+  "impact_assessment": "Customer ticket history is missing even though the API and PostgreSQL remain reachable. This is a P1 data-integrity incident because green health checks are masking loss of customer-visible business data.",
+  "hypotheses": [
+    {
+      "hypothesis": "PostgreSQL process outage or network failure",
+      "status": "rejected",
+      "evidence": "pg_isready, SELECT 1, and /health/ready remain successful during the incident."
+    },
+    {
+      "hypothesis": "Schema loss or incompatible migration",
+      "status": "rejected",
+      "evidence": "db/schema-contract.sql still passes and the expected ticket tables/columns remain present."
+    },
+    {
+      "hypothesis": "Localized logical loss of ticket business data",
+      "status": "confirmed",
+      "evidence": "tickets drops from its baseline count to zero while customer_activity remains at 100,000 rows and the API returns an empty ticket list with HTTP 200."
+    },
+    {
+      "hypothesis": "The available backup is unsafe or incomplete",
+      "status": "rejected",
+      "evidence": "Before loss injection, the custom-format backup was restored into a separate clean validation database and matched baseline schema, ticket count/fingerprint, and customer_activity count."
+    }
+  ],
+  "actions": [
+    {
+      "action": "Compare service health with customer-visible data invariants",
+      "reason": "A reachable database and HTTP 200 response do not prove customer data is present or correct."
+    },
+    {
+      "action": "Verify backup checksum/catalog and perform a clean validation restore before destructive recovery",
+      "reason": "A backup file is not a recovery asset until it has been proven restorable and semantically complete."
+    },
+    {
+      "action": "Capture unaffected table counts and schema state before recovery",
+      "reason": "This distinguishes localized logical loss from full-database corruption or schema failure."
+    },
+    {
+      "action": "Stop application writes, rebuild the isolated primary database, and restore only from the validated backup",
+      "reason": "Prevent new writes from racing with recovery and avoid replacing known loss with an unverified restore."
+    },
+    {
+      "action": "Re-run schema, row-count, fingerprint, API, and transactional validation after restore",
+      "reason": "Restore completion alone does not prove business recovery or data integrity."
+    }
+  ],
+  "current_assessment": "DB-006 is resolved by evidence-backed logical restore. The key lesson is that backup existence is insufficient; restore validation, integrity comparison, controlled write quiescence, and post-recovery application verification are required. Point-in-time recovery, replication failover, encrypted backup handling, and real retention policy remain outside this isolated exercise."
+}
