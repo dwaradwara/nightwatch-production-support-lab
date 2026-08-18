@@ -1,0 +1,25 @@
+{
+  "record_type": "incident",
+  "id": "INC-1001",
+  "created_at": "2026-08-18T06:10:00Z",
+  "owner": "L2-On-Shift",
+  "title": "Customer ticket submission intermittently failing",
+  "severity": "P2",
+  "status": "New",
+  "service": "ticket-api",
+  "source": "L1 escalation",
+  "detected_at": "2026-08-18T06:10:00Z",
+  "customer_impact": "Multiple customers reportedly cannot submit support tickets.",
+  "scope": "Unknown; L1 did not provide customer count, timestamps, region, request IDs, or reproducibility.",
+  "timeline": [
+    {
+      "at": "2026-08-18T06:10:00Z",
+      "event": "L1 escalated a vague customer report: 'ticket page is not working'."
+    }
+  ],
+  "evidence": [
+    "No request ID supplied",
+    "No HTTP status supplied",
+    "No affected customer list supplied"
+  ]
+}
