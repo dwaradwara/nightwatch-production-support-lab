@@ -1,0 +1,23 @@
+{
+  "record_type": "l2_notes",
+  "id": "L2N-1204",
+  "created_at": "2026-08-18T10:18:00Z",
+  "owner": "L2-On-Shift",
+  "incident_id": "INC-1204",
+  "impact_assessment": "The customer path remains available but ticket-detail latency increases materially. This is a degradation incident rather than a hard outage because HTTP responses, readiness, and core dependencies remain healthy.",
+  "hypotheses": [
+    {"hypothesis": "PostgreSQL, Redis, RabbitMQ, or readiness failure", "status": "rejected", "evidence": "Readiness and direct dependency health endpoints remain HTTP 200 during the degraded window."},
+    {"hypothesis": "Release or application-image regression", "status": "rejected", "evidence": "Release version, API image ID, container ID, and main API PID remain identical to the healthy baseline."},
+    {"hypothesis": "Proxy or routing failure", "status": "rejected", "evidence": "Requests remain HTTP 200 and the degraded-window X-Request-ID reaches the API and is correlated through Nginx/API logs, Loki, and Tempo."},
+    {"hypothesis": "CPU contention inside the API runtime", "status": "confirmed", "evidence": "Process inventory shows multiple runaway CPU workers, cgroup nr_throttled/throttled_usec increase during the fault window, and ticket-read p95 rises under the same fixed CPU budget. Terminating only those workers restores latency without restarting or redeploying the API."}
+  ],
+  "actions": [
+    {"action": "Compare customer latency with readiness, dependency health, release identity, image ID, container ID, and API PID", "reason": "Resource degradation can produce slow successful responses while normal availability checks remain green."},
+    {"action": "Inspect running processes and cgroup CPU throttling counters", "reason": "This distinguishes CPU contention from dependency latency and application/release failure."},
+    {"action": "Measure baseline and degraded ticket-read latency using repeated samples rather than one request", "reason": "p95 comparison is more defensible than diagnosing from a single timing observation."},
+    {"action": "Correlate one degraded-window X-Request-ID through Nginx/API logs, Loki, and Tempo", "reason": "This proves the observed request traversed the expected application path during resource pressure."},
+    {"action": "Do not restart or redeploy the API while the main process, release, image, and dependencies are healthy", "reason": "A restart would destroy evidence and could mask the resource consumer."},
+    {"action": "Terminate only the identified runaway workload and repeat latency plus full release verification", "reason": "Targeted mitigation proves causal recovery while preserving the same runtime, image, release, and resource budget."}
+  ],
+  "current_assessment": "APP-004 is resolved operationally after the offending CPU workload is terminated. Evidence proves the API remained alive on the same container/image/PID and the same fixed CPU budget throughout the incident. L2 should retain baseline/degraded/recovered latency summaries, cgroup cpu.stat snapshots, process inventory, request correlation, and no-restart recovery evidence for platform/application ownership."
+}
