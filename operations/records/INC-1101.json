@@ -40,13 +40,15 @@
   ],
   "evidence": [
     "PostgreSQL remained reachable during the degradation",
-    "customer_activity contains deterministic high-volume workload data",
-    "idx_customer_activity_customer_time absent during incident state",
-    "EXPLAIN ANALYZE showed sequential scan during incident state",
-    "pg_stat_activity captured before recovery to check state/waits",
-    "composite index restored through approved simulated change",
-    "post-change EXPLAIN returned to index-backed plan",
-    "customer lookup returned expected result set after recovery"
+    "customer_activity contained 100000 deterministic workload rows and occupied about 24 MB in the CI exercise",
+    "baseline EXPLAIN used Bitmap Index Scan on idx_customer_activity_customer_time and completed in 0.300 ms",
+    "idx_customer_activity_customer_time was absent during incident state",
+    "incident EXPLAIN used Seq Scan on customer_activity, removed 99980 rows by filter, touched 2774 shared buffers, and completed in 11.398 ms",
+    "measured incident execution time was about 38x the indexed baseline in this CI run",
+    "pg_stat_activity was captured before recovery to check session state/waits",
+    "composite index was restored through the approved simulated change",
+    "recovered EXPLAIN returned to Bitmap Index Scan on idx_customer_activity_customer_time and completed in 0.256 ms",
+    "customer lookup returned the expected 20-row result set after recovery"
   ],
   "resolution": "After L2 proved the missing-index query-plan regression and captured database evidence, the approved simulated recovery recreated idx_customer_activity_customer_time concurrently, analyzed the table, and verified the index-backed plan and result set."
 }
