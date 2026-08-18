@@ -1,0 +1,46 @@
+{
+  "record_type": "runbook",
+  "id": "RUN-DB-BACKUP-RESTORE",
+  "created_at": "2026-08-18T08:12:00Z",
+  "owner": "L2-Operations",
+  "title": "Validate and restore PostgreSQL logical backup after confirmed data loss",
+  "trigger": "Customer-visible PostgreSQL data is missing or corrupted while the database process may still be reachable.",
+  "preconditions": [
+    "confirm actual business-data loss independently of service health checks",
+    "capture affected and unaffected table counts plus the current schema contract",
+    "identify the backup recovery point and retain its checksum/catalog metadata",
+    "restore the backup into an isolated validation target before using it for destructive primary recovery whenever time and incident policy permit",
+    "compare validation-restore schema and business-data invariants with the approved recovery expectation",
+    "quiesce application writes before replacing the primary database",
+    "obtain required simulated restore approval"
+  ],
+  "diagnostic_steps": [
+    "compare /health/ready with customer-visible data counts or fingerprints",
+    "verify PostgreSQL reachability with pg_isready and a minimal query",
+    "run db/schema-contract.sql to determine whether schema is intact",
+    "inventory affected and unaffected business tables",
+    "inspect the pg_restore catalog for required schema/table data",
+    "verify the backup checksum against the retained checksum record",
+    "perform a clean validation restore and compare ticket count, ticket fingerprint, activity count, and schema contract before selecting that backup for recovery"
+  ],
+  "mitigation_steps": [
+    "stop or quiesce application writes before database replacement",
+    "terminate only sessions connected to the isolated recovery database when required",
+    "recreate the damaged logical database and restore from the previously validated custom-format backup",
+    "do not treat pg_restore exit status alone as recovery proof",
+    "do not overwrite a primary database from an untested backup when an isolated restore validation can be performed",
+    "do not claim this logical restore procedure covers PITR, physical backups, replication failover, or cross-region disaster recovery"
+  ],
+  "validation_steps": [
+    "schema-contract.sql passes on the restored primary",
+    "ticket row count matches the approved baseline/recovery point",
+    "deterministic ticket fingerprint matches the approved baseline/recovery point",
+    "customer_activity count matches the approved baseline/recovery point",
+    "/health/ready returns healthy",
+    "/api/tickets returns the restored ticket dataset",
+    "a transactional write/rollback probe succeeds without changing the restored fingerprint",
+    "PostgreSQL readiness is healthy after recovery",
+    "retain backup checksum, restore catalog, validation-restore evidence, loss evidence, restore timings, and final integrity evidence"
+  ],
+  "escalation_boundary": "Escalate to DBA/platform/incident command when no validated backup exists, the required recovery point is ambiguous, writes cannot be safely quiesced, backup checksum/catalog validation fails, clean restore integrity does not match expectations, point-in-time recovery is required, replication/standby state must be coordinated, physical corruption is suspected, or recovery would overwrite data that may need forensic preservation."
+}
