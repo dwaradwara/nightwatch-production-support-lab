@@ -23,6 +23,13 @@ function Clear-IncidentSessions {
     docker exec $DbContainer psql -U $DbUser -d $DbName -X -Atc $sql 2>$null | Out-Null
 }
 
+function Stop-JobSafe($Job) {
+    if ($null -ne $Job) {
+        Stop-Job -Job $Job -ErrorAction SilentlyContinue | Out-Null
+        Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue | Out-Null
+    }
+}
+
 function Baseline {
     Clear-IncidentSessions
     $count = Invoke-Psql "SELECT count(*) FROM customer_activity WHERE id=$TargetId;"
@@ -43,13 +50,43 @@ function Exercise {
     $blockerSql = "SET application_name='$BlockerApp'; BEGIN; UPDATE customer_activity SET payload=payload WHERE id=$TargetId; SELECT pg_sleep(60); ROLLBACK;"
     $waiterSql = "SET application_name='$WaiterApp'; SET lock_timeout='30s'; UPDATE customer_activity SET payload=payload WHERE id=$TargetId;"
 
-    $blocker = Start-Process docker -ArgumentList @('exec',$DbContainer,'psql','-U',$DbUser,'-d',$DbName,'-X','-v','ON_ERROR_STOP=1','-c',$blockerSql) -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $EvidenceDir 'blocker.out.txt') -RedirectStandardError (Join-Path $EvidenceDir 'blocker.err.txt')
-    Start-Sleep -Seconds 2
+    $blockerOut = Join-Path $EvidenceDir 'blocker.out.txt'
+    $blockerErr = Join-Path $EvidenceDir 'blocker.err.txt'
+    $waiterOut = Join-Path $EvidenceDir 'waiter.out.txt'
+    $waiterErr = Join-Path $EvidenceDir 'waiter.err.txt'
 
-    $waiter = Start-Process docker -ArgumentList @('exec',$DbContainer,'psql','-U',$DbUser,'-d',$DbName,'-X','-v','ON_ERROR_STOP=1','-c',$waiterSql) -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $EvidenceDir 'waiter.out.txt') -RedirectStandardError (Join-Path $EvidenceDir 'waiter.err.txt')
-    Start-Sleep -Seconds 2
+    $blocker = $null
+    $waiter = $null
 
-    $diag = @"
+    try {
+        $blocker = Start-Job -ArgumentList $DbContainer,$DbUser,$DbName,$blockerSql,$blockerOut,$blockerErr -ScriptBlock {
+            param($Container,$User,$Database,$Sql,$OutFile,$ErrFile)
+            & docker exec $Container psql -U $User -d $Database -X -v ON_ERROR_STOP=1 -c $Sql 1> $OutFile 2> $ErrFile
+            if ($LASTEXITCODE -ne 0) { throw "blocker psql exited $LASTEXITCODE" }
+        }
+
+        $blockerReady = $false
+        for ($i = 0; $i -lt 20; $i++) {
+            Start-Sleep -Milliseconds 250
+            $count = Invoke-Psql "SELECT count(*) FROM pg_stat_activity WHERE application_name='$BlockerApp' AND xact_start IS NOT NULL;"
+            if ($count.Trim() -eq '1') { $blockerReady = $true; break }
+        }
+        if (-not $blockerReady) { throw 'Blocker transaction did not become active' }
+
+        $waiter = Start-Job -ArgumentList $DbContainer,$DbUser,$DbName,$waiterSql,$waiterOut,$waiterErr -ScriptBlock {
+            param($Container,$User,$Database,$Sql,$OutFile,$ErrFile)
+            & docker exec $Container psql -U $User -d $Database -X -v ON_ERROR_STOP=1 -c $Sql 1> $OutFile 2> $ErrFile
+            if ($LASTEXITCODE -ne 0) { throw "waiter psql exited $LASTEXITCODE" }
+        }
+
+        $pairCount = '0'
+        for ($i = 0; $i -lt 20; $i++) {
+            Start-Sleep -Milliseconds 250
+            $pairCount = Invoke-Psql "SELECT count(*) FROM pg_stat_activity w WHERE w.application_name='$WaiterApp' AND w.wait_event_type='Lock' AND cardinality(pg_blocking_pids(w.pid))>0;"
+            if ($pairCount.Trim() -eq '1') { break }
+        }
+
+        $diag = @"
 SELECT w.pid AS blocked_pid,
        w.application_name AS blocked_app,
        w.state AS blocked_state,
@@ -67,40 +104,44 @@ JOIN pg_stat_activity b ON b.pid=p.blocker_pid
 WHERE w.application_name='$WaiterApp';
 "@
 
-    docker exec $DbContainer psql -U $DbUser -d $DbName -X -P pager=off -c $diag | Tee-Object -FilePath (Join-Path $EvidenceDir 'blocking-diagnostics.txt')
-    if ($LASTEXITCODE -ne 0) { throw 'Blocking diagnostics failed' }
+        docker exec $DbContainer psql -U $DbUser -d $DbName -X -P pager=off -c $diag | Tee-Object -FilePath (Join-Path $EvidenceDir 'blocking-diagnostics.txt')
+        if ($LASTEXITCODE -ne 0) { throw 'Blocking diagnostics failed' }
 
-    $pairCount = Invoke-Psql "SELECT count(*) FROM pg_stat_activity w WHERE w.application_name='$WaiterApp' AND w.wait_event_type='Lock' AND cardinality(pg_blocking_pids(w.pid))>0;"
-    $pairCount | Set-Content (Join-Path $EvidenceDir 'blocked-session-count.txt')
-    if ($pairCount.Trim() -ne '1') {
-        Clear-IncidentSessions
-        throw "Expected one blocked waiter, observed $pairCount"
+        $pairCount | Set-Content (Join-Path $EvidenceDir 'blocked-session-count.txt')
+        if ($pairCount.Trim() -ne '1') {
+            throw "Expected one blocked waiter, observed $pairCount"
+        }
+
+        $blockerPid = Invoke-Psql "SELECT pid FROM pg_stat_activity WHERE application_name='$BlockerApp' AND xact_start IS NOT NULL;"
+        if (-not $blockerPid.Trim()) { throw 'Could not identify blocker PID' }
+        "blocker_pid=$($blockerPid.Trim())`napplication_name=$BlockerApp" | Set-Content (Join-Path $EvidenceDir 'recovery-target.txt')
+
+        $terminated = Invoke-Psql "SELECT pg_terminate_backend($($blockerPid.Trim()));"
+        $terminated | Set-Content (Join-Path $EvidenceDir 'recovery-action.txt')
+        if ($terminated.Trim() -ne 't') { throw 'Targeted blocker termination failed' }
+
+        $completed = Wait-Job -Job $waiter -Timeout 10
+        if ($null -eq $completed) { throw 'Blocked waiter did not complete after blocker termination' }
+        Receive-Job -Job $waiter -ErrorAction Stop | Out-Null
+        Start-Sleep -Seconds 1
+
+        $remaining = Invoke-Psql "SELECT count(*) FROM pg_stat_activity WHERE application_name IN ('$BlockerApp','$WaiterApp');"
+        $remaining | Set-Content (Join-Path $EvidenceDir 'post-recovery-session-count.txt')
+        if ($remaining.Trim() -ne '0') { throw "Incident sessions remained after recovery: $remaining" }
+
+        docker exec $DbContainer psql -U $DbUser -d $DbName -X -v ON_ERROR_STOP=1 -c "SET lock_timeout='2s'; UPDATE customer_activity SET payload=payload WHERE id=$TargetId;" | Tee-Object -FilePath (Join-Path $EvidenceDir 'post-recovery-update.txt')
+        if ($LASTEXITCODE -ne 0) { throw 'Post-recovery update failed' }
+
+        $health = Invoke-Psql 'SELECT 1;'
+        $health | Set-Content (Join-Path $EvidenceDir 'post-recovery-db-health.txt')
+
+        Write-Host 'INC-019 exercise verified: live row-lock contention captured, blocker identified with pg_blocking_pids(), targeted backend terminated, waiter released, and write path recovered.'
     }
-
-    $blockerPid = Invoke-Psql "SELECT pid FROM pg_stat_activity WHERE application_name='$BlockerApp' AND xact_start IS NOT NULL;"
-    if (-not $blockerPid.Trim()) {
+    finally {
         Clear-IncidentSessions
-        throw 'Could not identify blocker PID'
+        Stop-JobSafe $waiter
+        Stop-JobSafe $blocker
     }
-    "blocker_pid=$($blockerPid.Trim())`napplication_name=$BlockerApp" | Set-Content (Join-Path $EvidenceDir 'recovery-target.txt')
-
-    $terminated = Invoke-Psql "SELECT pg_terminate_backend($($blockerPid.Trim()));"
-    $terminated | Set-Content (Join-Path $EvidenceDir 'recovery-action.txt')
-    if ($terminated.Trim() -ne 't') { throw 'Targeted blocker termination failed' }
-
-    if (-not $waiter.WaitForExit(10000)) { throw 'Blocked waiter did not complete after blocker termination' }
-    Start-Sleep -Seconds 1
-
-    $remaining = Invoke-Psql "SELECT count(*) FROM pg_stat_activity WHERE application_name IN ('$BlockerApp','$WaiterApp');"
-    $remaining | Set-Content (Join-Path $EvidenceDir 'post-recovery-session-count.txt')
-
-    docker exec $DbContainer psql -U $DbUser -d $DbName -X -v ON_ERROR_STOP=1 -c "SET lock_timeout='2s'; UPDATE customer_activity SET payload=payload WHERE id=$TargetId;" | Tee-Object -FilePath (Join-Path $EvidenceDir 'post-recovery-update.txt')
-    if ($LASTEXITCODE -ne 0) { throw 'Post-recovery update failed' }
-
-    $health = Invoke-Psql 'SELECT 1;'
-    $health | Set-Content (Join-Path $EvidenceDir 'post-recovery-db-health.txt')
-
-    Write-Host 'INC-019 exercise verified: live row-lock contention captured, blocker identified with pg_blocking_pids(), targeted backend terminated, waiter released, and write path recovered.'
 }
 
 function Verify {
@@ -114,6 +155,6 @@ function Verify {
 
 switch ($Action) {
     'baseline' { Baseline }
-    'exercise' { try { Exercise } finally { Clear-IncidentSessions } }
+    'exercise' { Exercise }
     'verify'   { Verify }
 }
