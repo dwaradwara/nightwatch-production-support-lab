@@ -11,7 +11,7 @@ New-Item -ItemType Directory -Force -Path $EvidenceDir | Out-Null
 
 function Get-HttpResult([string]$Path) {
     try {
-        $r = Invoke-WebRequest -Uri "$ApiBase$Path" -Method GET -TimeoutSec 10
+        $r = Invoke-WebRequest -UseBasicParsing -Uri "$ApiBase$Path" -Method GET -TimeoutSec 45
         return [pscustomobject]@{ Status = [int]$r.StatusCode; Body = $r.Content }
     }
     catch {
@@ -20,6 +20,7 @@ function Get-HttpResult([string]$Path) {
             $status = [int]$_.Exception.Response.StatusCode
         }
         $body = $_.ErrorDetails.Message
+        if (-not $body) { $body = $_.Exception.Message }
         return [pscustomobject]@{ Status = $status; Body = $body }
     }
 }
