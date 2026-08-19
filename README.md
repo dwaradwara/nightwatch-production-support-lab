@@ -125,6 +125,20 @@ Recovery validation showed all dependencies returning healthy after RabbitMQ was
 
 ---
 
+### INC-019 - PostgreSQL Row-Lock Contention
+
+PostgreSQL remained reachable, but one open transaction held a lock on a `customer_activity` row while a second session attempted to update the same row.
+
+`pg_stat_activity` showed the waiter as active with `wait_event_type = Lock` and `wait_event = transactionid`. `pg_blocking_pids()` mapped the blocked backend to the exact blocking backend before recovery.
+
+The evidence-matched blocker was terminated with `pg_terminate_backend()`, releasing the waiter without restarting PostgreSQL. A post-recovery update returned `UPDATE 1`.
+
+**Demonstrated:** PostgreSQL lock diagnostics, wait-event analysis, `pg_stat_activity`, `pg_blocking_pids()`, transaction reasoning, targeted backend recovery and write-path validation.
+
+[View INC-019](./incidents/INC-019-postgresql-row-lock-contention/README.md)
+
+---
+
 ## PostgreSQL persistence and schema recovery
 
 During baseline testing for INC-017, `/api/tickets` unexpectedly returned HTTP 500 both through Nginx and directly from the API.
@@ -213,6 +227,7 @@ GitHub Actions runs validation on pushes and pull requests to `main`, including:
 - HTTP status and header analysis
 - Nginx reverse-proxy diagnostics
 - PostgreSQL troubleshooting
+- PostgreSQL lock contention and blocking-session analysis
 - RabbitMQ and asynchronous processing troubleshooting
 - Partial-failure and data-consistency analysis
 - Docker networking and service discovery
@@ -239,5 +254,7 @@ A trusted TLS certificate does not automatically mean its hostname is correct.
 A running PostgreSQL container does not automatically mean its expected schema exists.
 
 An HTTP 503 does not automatically mean nothing was written successfully.
+
+A healthy PostgreSQL process does not mean every database request can make forward progress.
 
 NIGHTWATCH is built around investigating those distinctions.
