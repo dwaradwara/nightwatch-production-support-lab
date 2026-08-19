@@ -105,6 +105,26 @@ Chrome DevTools -> no CORS errors
 
 ---
 
+### INC-018 - RabbitMQ Outage / Partial Ticket Processing Failure
+
+A new ticket was committed successfully to PostgreSQL, but RabbitMQ was unavailable when the API attempted to publish the background `ticket.created` event.
+
+The API returned HTTP 503 while preserving the ticket with:
+
+```text
+processing_status = publish_failed
+```
+
+Database verification proved that the client-visible failure occurred after the persistent write, demonstrating a realistic partial-success condition and duplicate-retry risk.
+
+Recovery validation showed all dependencies returning healthy after RabbitMQ was restored.
+
+**Demonstrated:** RabbitMQ troubleshooting, HTTP 503 analysis, PostgreSQL state verification, asynchronous workflow diagnosis, partial-failure handling, data-consistency reasoning and recovery validation.
+
+[View INC-018](./incidents/INC-018-rabbitmq-publish-failure/README.md)
+
+---
+
 ## PostgreSQL persistence and schema recovery
 
 During baseline testing for INC-017, `/api/tickets` unexpectedly returned HTTP 500 both through Nginx and directly from the API.
@@ -193,6 +213,8 @@ GitHub Actions runs validation on pushes and pull requests to `main`, including:
 - HTTP status and header analysis
 - Nginx reverse-proxy diagnostics
 - PostgreSQL troubleshooting
+- RabbitMQ and asynchronous processing troubleshooting
+- Partial-failure and data-consistency analysis
 - Docker networking and service discovery
 - TLS / HTTPS troubleshooting
 - CORS and browser troubleshooting
@@ -215,5 +237,7 @@ An HTTP 200 OPTIONS response does not automatically mean CORS is valid.
 A trusted TLS certificate does not automatically mean its hostname is correct.
 
 A running PostgreSQL container does not automatically mean its expected schema exists.
+
+An HTTP 503 does not automatically mean nothing was written successfully.
 
 NIGHTWATCH is built around investigating those distinctions.
