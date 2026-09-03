@@ -1,20 +1,42 @@
-﻿# NIGHTWATCH Production Support Lab
+# NIGHTWATCH Production Support Lab
 
-NIGHTWATCH is a self-built production support environment where I reproduce, investigate, resolve, and document realistic application and infrastructure incidents.
+NIGHTWATCH is a self-built production-support environment used to reproduce, investigate, resolve, and document realistic application and infrastructure failures.
 
-The focus is troubleshooting: establish a healthy baseline, isolate the failing layer, use evidence instead of assumptions, apply a controlled fix, and verify recovery.
+The focus is not feature development. It is troubleshooting: establish a healthy baseline, reproduce the symptom, collect evidence, isolate the failing layer, apply a controlled fix, and verify recovery.
 
 > All incidents are intentionally reproduced in a training environment. This repository is portfolio evidence, not employer production experience.
 
 ---
 
-## What NIGHTWATCH demonstrates
+## 90-second hiring-manager review
 
-Typical investigation flow:
+If you only review a few cases, start here:
 
-`Symptom -> Reproduce -> Baseline -> Logs / Metrics / Traces -> Isolate layer -> Root cause -> Fix -> Recovery validation -> RCA`
+1. [INC-018 — RabbitMQ publish failure](./incidents/INC-018-rabbitmq-publish-failure/README.md): partial success, HTTP 503, persistent database state, duplicate-retry risk.
+2. [INC-019 — PostgreSQL row-lock contention](./incidents/INC-019-postgresql-row-lock-contention/README.md): blocking-session identification with `pg_stat_activity` and `pg_blocking_pids()`.
+3. [INC-021 — Worker outage and queue backlog](./incidents/INC-021-worker-queue-backlog/README.md): healthy broker, zero consumers, 114 queued jobs, recovery and queue-drain validation.
+4. [INC-022 — PostgreSQL connection exhaustion](./incidents/INC-022-postgresql-connection-exhaustion/README.md): database process healthy but new clients rejected because connection capacity was exhausted.
+5. [INC-024 — Storage pressure / ENOSPC](./incidents/INC-024-storage-pressure-enospc/README.md): controlled filesystem exhaustion and risk-aware recovery testing.
 
-The environment intentionally contains multiple layers so the visible symptom is not always where the actual fault exists.
+These cases show the main capability this project is intended to demonstrate: distinguishing the visible symptom from the actual failing layer.
+
+---
+
+## Investigation model
+
+```text
+Symptom
+  -> Reproduce
+  -> Establish baseline
+  -> Logs / metrics / traces / database state
+  -> Isolate the failing layer
+  -> Root cause
+  -> Smallest safe fix
+  -> Recovery validation
+  -> RCA / prevention
+```
+
+A 502 does not automatically mean the backend is down. A healthy broker does not mean consumers are running. A running PostgreSQL process does not mean new sessions can connect or every transaction can make forward progress.
 
 ---
 
@@ -30,13 +52,11 @@ Browser / API Client
         v
      Flask API
         |
-   +----+-----+
-   |          |
-PostgreSQL   Redis
-              |
-           RabbitMQ
-              |
-            Worker
+   +----+---------+
+   |      |       |
+PostgreSQL Redis RabbitMQ
+                  |
+                Worker
 
 Observability
 --------------------------------
@@ -50,116 +70,52 @@ OpenTelemetry instrumentation
 
 The stack runs locally with Docker Compose.
 
----
-
-## Selected incidents
-
-### INC-015 - Docker DNS / Service Resolution Failure
-
-A healthy API returned HTTP 200 directly while Nginx returned HTTP 502.
-
-Nginx logs showed that the configured upstream hostname could not be resolved inside the Docker network.
-
-The incident isolated the failure to Docker DNS / service discovery rather than the application process.
-
-**Demonstrated:** HTTP 502 troubleshooting, Nginx logs, Docker networking, service discovery, direct backend health checks, RCA and recovery validation.
-
-[View INC-015](./incidents/INC-015-dns-service-resolution/README.md)
+For more detail, see [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md).
 
 ---
 
-### INC-016 - TLS Certificate Hostname Mismatch
+## Incident portfolio
 
-HTTPS failed when the client hostname did not match the certificate Subject Alternative Name.
-
-Certificate trust and hostname verification were tested separately so the failure could be identified specifically as an identity mismatch rather than an untrusted certificate.
-
-A corrected certificate containing `nightwatch.local` in the SAN was deployed and HTTPS recovered successfully.
-
-**Demonstrated:** TLS diagnostics, CN/SAN inspection, trust vs hostname validation, curl verbose output, Nginx HTTPS configuration and recovery testing.
-
-[View INC-016](./incidents/INC-016-tls-hostname-mismatch/README.md)
-
----
-
-### INC-017 - Browser CORS / Preflight Failure
-
-The `/api/tickets` endpoint returned HTTP 200 through curl, while the browser frontend failed with `TypeError: Failed to fetch`.
-
-Chrome DevTools showed that the browser blocked the request because the preflight response did not contain the required CORS headers.
-
-Nginx was updated to explicitly allow the frontend origin, GET/OPTIONS methods, and Authorization/Content-Type headers.
-
-Recovery validation showed:
-
-```text
-OPTIONS preflight -> HTTP 204
-Access-Control-Allow-Origin -> http://localhost:3001
-Browser fetch -> successful
-Chrome DevTools -> no CORS errors
-```
-
-**Demonstrated:** browser vs API troubleshooting, Chrome DevTools, OPTIONS preflight analysis, HTTP headers, CORS configuration, Nginx and recovery validation.
-
-[View INC-017](./incidents/INC-017-cors-preflight-failure/README.md)
+| Incident | Failure investigated | Main support signal |
+|---|---|---|
+| [INC-015](./incidents/INC-015-dns-service-resolution/README.md) | Docker DNS / service-resolution failure | Backend healthy directly while Nginx returned 502 |
+| [INC-016](./incidents/INC-016-tls-hostname-mismatch/README.md) | TLS hostname mismatch | Trust succeeded but SAN/hostname verification failed |
+| [INC-017](./incidents/INC-017-cors-preflight-failure/README.md) | Browser CORS / preflight failure | API worked with curl while browser request was blocked |
+| [INC-018](./incidents/INC-018-rabbitmq-publish-failure/README.md) | RabbitMQ publish failure | PostgreSQL write succeeded before asynchronous publish failed |
+| [INC-019](./incidents/INC-019-postgresql-row-lock-contention/README.md) | PostgreSQL row-lock contention | Waiter mapped to the exact blocking backend |
+| [INC-020](./incidents/INC-020-redis-readiness-degradation/README.md) | Redis readiness degradation | Readiness failed while tested business reads remained available |
+| [INC-021](./incidents/INC-021-worker-queue-backlog/README.md) | Worker outage / queue backlog | 114 ready messages, zero consumers, broker healthy |
+| [INC-022](./incidents/INC-022-postgresql-connection-exhaustion/README.md) | PostgreSQL connection exhaustion | New clients rejected while PostgreSQL remained running |
+| [INC-023](./incidents/INC-023-postgresql-slow-query/README.md) | Long-running PostgreSQL session | Session-level latency isolated from database-wide availability |
+| [INC-024](./incidents/INC-024-storage-pressure-enospc/README.md) | Filesystem capacity exhaustion | ENOSPC reproduced in an isolated disposable filesystem |
 
 ---
 
-### INC-018 - RabbitMQ Outage / Partial Ticket Processing Failure
+## Examples of layered troubleshooting
 
-A new ticket was committed successfully to PostgreSQL, but RabbitMQ was unavailable when the API attempted to publish the background `ticket.created` event.
+### Nginx 502 vs backend health
 
-The API returned HTTP 503 while preserving the ticket with:
+INC-015 verifies the API directly before blaming the application. The backend returned HTTP 200 while Nginx failed because the configured upstream hostname could not be resolved inside the Docker network.
 
-```text
-processing_status = publish_failed
-```
+### Browser failure vs API failure
 
-Database verification proved that the client-visible failure occurred after the persistent write, demonstrating a realistic partial-success condition and duplicate-retry risk.
+INC-017 separates browser security behavior from API availability. `curl` succeeded, while Chrome DevTools exposed a failed preflight caused by missing CORS headers.
 
-Recovery validation showed all dependencies returning healthy after RabbitMQ was restored.
+### API failure vs persistent state
 
-**Demonstrated:** RabbitMQ troubleshooting, HTTP 503 analysis, PostgreSQL state verification, asynchronous workflow diagnosis, partial-failure handling, data-consistency reasoning and recovery validation.
+INC-018 demonstrates partial failure. The ticket was committed to PostgreSQL before RabbitMQ publish failed, so an HTTP 503 did not mean "nothing happened." The stored state had to be checked before considering a retry.
 
-[View INC-018](./incidents/INC-018-rabbitmq-publish-failure/README.md)
+### Database process health vs transaction progress
 
----
+INC-019 uses PostgreSQL wait events and blocking-PID evidence to identify a specific blocking backend. Recovery targets the blocker instead of restarting the database.
 
-### INC-019 - PostgreSQL Row-Lock Contention
+### Broker health vs consumer health
 
-PostgreSQL remained reachable, but one open transaction held a lock on a `customer_activity` row while a second session attempted to update the same row.
+INC-021 shows RabbitMQ healthy while the worker was absent. Queue depth increased to 114 messages with zero consumers; restarting the worker restored one consumer and drained the backlog to zero.
 
-`pg_stat_activity` showed the waiter as active with `wait_event_type = Lock` and `wait_event = transactionid`. `pg_blocking_pids()` mapped the blocked backend to the exact blocking backend before recovery.
+### Database health vs connection capacity
 
-The evidence-matched blocker was terminated with `pg_terminate_backend()`, releasing the waiter without restarting PostgreSQL. A post-recovery update returned `UPDATE 1`.
-
-**Demonstrated:** PostgreSQL lock diagnostics, wait-event analysis, `pg_stat_activity`, `pg_blocking_pids()`, transaction reasoning, targeted backend recovery and write-path validation.
-
-[View INC-019](./incidents/INC-019-postgresql-row-lock-contention/README.md)
-
----
-
-## PostgreSQL persistence and schema recovery
-
-During baseline testing for INC-017, `/api/tickets` unexpectedly returned HTTP 500 both through Nginx and directly from the API.
-
-Application logs showed:
-
-```text
-psycopg.errors.UndefinedTable: relation "tickets" does not exist
-```
-
-Database inspection showed zero application tables.
-
-The PostgreSQL container had no persistent data volume, so recreating the container had removed the database state.
-
-The environment was corrected with:
-
-- a persistent PostgreSQL named volume
-- repeatable `db/init.sql` schema initialization
-- seed ticket data
-
-After PostgreSQL was recreated, the expected table and records were present and `/api/tickets` returned HTTP 200.
+INC-022 shows PostgreSQL still running while new clients were rejected with `FATAL: sorry, too many clients already`. The problem was capacity, not a database crash.
 
 ---
 
@@ -167,20 +123,35 @@ After PostgreSQL was recreated, the expected table and records were present and 
 
 NIGHTWATCH uses multiple telemetry signals during troubleshooting:
 
-- **Prometheus** - metrics
-- **Grafana** - dashboards
-- **Loki** - centralized logs
-- **Tempo** - distributed traces
-- **Grafana Alloy** - telemetry and log collection
-- **OpenTelemetry** - API instrumentation
+- **Prometheus** — metrics
+- **Grafana** — dashboards
+- **Loki** — centralized logs
+- **Tempo** — distributed traces
+- **Grafana Alloy** — telemetry and log collection
+- **OpenTelemetry** — API instrumentation
 
-The investigation model is simple:
+The investigation model is deliberately simple:
 
 ```text
 Metrics -> What changed?
 Logs    -> What failed?
 Traces  -> Where did the request fail?
+State   -> What actually happened to the data or dependency?
 ```
+
+---
+
+## PostgreSQL persistence and schema recovery
+
+During baseline testing, `/api/tickets` returned HTTP 500 even though the API process itself was running.
+
+Application logs showed:
+
+```text
+psycopg.errors.UndefinedTable: relation "tickets" does not exist
+```
+
+Inspection showed the application schema had disappeared because PostgreSQL had no persistent data volume. The environment was corrected with a named volume and repeatable schema initialization, then validated with restored tables, seed data, and HTTP 200 responses.
 
 ---
 
@@ -210,7 +181,7 @@ docs/         Architecture and support documentation
 
 ## CI
 
-GitHub Actions runs validation on pushes and pull requests to `main`, including:
+GitHub Actions validates pushes and pull requests to `main`, including:
 
 - Python environment setup
 - API dependency installation
@@ -223,38 +194,25 @@ GitHub Actions runs validation on pushes and pull requests to `main`, including:
 ## Support skills demonstrated
 
 - Incident reproduction and triage
-- REST API troubleshooting
-- HTTP status and header analysis
+- REST API and HTTP troubleshooting
 - Nginx reverse-proxy diagnostics
-- PostgreSQL troubleshooting
-- PostgreSQL lock contention and blocking-session analysis
-- RabbitMQ and asynchronous processing troubleshooting
-- Partial-failure and data-consistency analysis
+- PostgreSQL sessions, locks, capacity and availability analysis
+- RabbitMQ queue and worker troubleshooting
+- Redis dependency troubleshooting
+- Partial-failure and data-consistency reasoning
 - Docker networking and service discovery
 - TLS / HTTPS troubleshooting
 - CORS and browser troubleshooting
-- Chrome DevTools investigation
+- Linux filesystem and ENOSPC diagnosis
 - Metrics, logs and distributed tracing
-- Root cause analysis
-- Recovery validation
-- Technical documentation
-- Customer-facing incident communication
+- Root-cause analysis and recovery validation
+- Technical incident documentation
 - Git-based change management
 
 ---
 
-## Why this project exists
+## Scope and honesty boundary
 
-A 502 does not automatically mean the backend is down.
+This lab supports claims of hands-on troubleshooting practice, evidence collection, incident reasoning, service recovery, and technical documentation.
 
-An HTTP 200 OPTIONS response does not automatically mean CORS is valid.
-
-A trusted TLS certificate does not automatically mean its hostname is correct.
-
-A running PostgreSQL container does not automatically mean its expected schema exists.
-
-An HTTP 503 does not automatically mean nothing was written successfully.
-
-A healthy PostgreSQL process does not mean every database request can make forward progress.
-
-NIGHTWATCH is built around investigating those distinctions.
+It does **not** prove employer production ownership, on-call tenure, real customer SLA performance, or production incident volume. Those are intentionally not claimed.
